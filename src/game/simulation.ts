@@ -6,6 +6,7 @@ import {
   MAX_UNITS_PER_FACTION,
   MUTATIONS,
   MUTATION_THRESHOLDS,
+  PLAYER_STARTING_RESOURCES,
   TICK_RATE,
   TICK_SECONDS,
   UNITS,
@@ -97,7 +98,7 @@ export class GameSimulation {
   cargo: CargoPacket[] = [];
   projectiles: Projectile[] = [];
   resources: Record<FactionId, ResourceStock> = {
-    player: { biomass: 90, ore: 95, water: 0, energyProduced: 0, energyUsed: 0, research: 0 },
+    player: { ...PLAYER_STARTING_RESOURCES, energyProduced: 0, energyUsed: 0, research: 0 },
     enemy: { biomass: 90, ore: 95, water: 0, energyProduced: 0, energyUsed: 0, research: 0 },
   };
   mutations: Record<FactionId, MutationId[]> = { player: [], enemy: [] };
@@ -204,14 +205,15 @@ export class GameSimulation {
   private deploy(playerRegionId: number): boolean {
     const playerRegion = this.regions.find((region) => region.id === playerRegionId);
     if (!playerRegion?.startCandidate) return false;
-    this.spawnBase("player", playerRegion);
+    this.spawnPlayerDeployment(playerRegion);
     const enemyRegions = this.chooseEnemyRegions(playerRegionId);
     if (enemyRegions.length === 0) return false;
     for (const enemyRegion of enemyRegions) this.spawnBase("enemy", enemyRegion);
     this.phase = "playing";
     this.updatePower();
     this.updateVision();
-    this.notify("success", `NOYAU ÉTABLI — ${playerRegion.name.toUpperCase()}`);
+    this.notify("success", `ÉQUIPE DÉPLOYÉE — ${playerRegion.name.toUpperCase()}`);
+    this.notify("info", "PLACEZ LE NOYAU POUR AMORCER LA COLONIE");
     this.notify("warning", `${enemyRegions.length} COLONIE${enemyRegions.length > 1 ? "S" : ""} RIVALE${enemyRegions.length > 1 ? "S" : ""} DÉTECTÉE${enemyRegions.length > 1 ? "S" : ""}`);
     return true;
   }
@@ -251,6 +253,20 @@ export class GameSimulation {
     }
     for (let index = 0; index < 4; index += 1) {
       this.spawnUnit(faction, "worker", {
+        x: center.x + (index - 1.5) * 1.2,
+        z: center.z + 4,
+      });
+    }
+  }
+
+  private spawnPlayerDeployment(region: Region): void {
+    region.owner = "player";
+    region.captureFaction = "player";
+    region.captureProgress = 100;
+    this.discoveredBy.player.add(region.id);
+    const center = this.findFreePoint(region, region.center, 5);
+    for (let index = 0; index < 4; index += 1) {
+      this.spawnUnit("player", "worker", {
         x: center.x + (index - 1.5) * 1.2,
         z: center.z + 4,
       });
@@ -351,6 +367,10 @@ export class GameSimulation {
   private placeBuilding(faction: FactionId, type: BuildingType, rawPosition: Vec2): boolean {
     const definition = BUILDINGS[type];
     if (!definition.buildable) return false;
+    if (type === "core" && this.buildings.some((building) => building.faction === faction && building.type === "core" && building.hp > 0)) {
+      if (faction === "player") this.notify("warning", "NOYAU DÉJÀ ÉTABLI");
+      return false;
+    }
     if (!this.canAfford(faction, definition.cost)) {
       if (faction === "player") this.notify("warning", "MATIÈRE INSUFFISANTE");
       return false;

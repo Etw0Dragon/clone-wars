@@ -14,6 +14,7 @@ export const MAP_HALF_SIZE = 50;
 export const BUILD_GRID = 2.5;
 export const CORE_SHIELD_SECONDS = 75;
 export const MAX_UNITS_PER_FACTION = 200;
+export const PLAYER_STARTING_RESOURCES = { biomass: 180, ore: 220, water: 0 };
 
 export interface BiomeDefinition {
   name: string;
@@ -87,8 +88,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     name: "Noyau de réplication",
     shortName: "NOYAU",
     description: "Le cœur de la colonie. Ses racines cultivent lentement biomasse et minerai ; sa destruction fait s'effondrer la colonie.",
-    cost: {}, hp: 2600, buildTime: 0, size: 5, energyUse: 0,
-    energyProduction: 12, vision: 19, buildable: false,
+    cost: {}, hp: 2600, buildTime: 4, size: 5, energyUse: 0,
+    energyProduction: 12, vision: 19, buildable: true, shortcut: "N",
   },
   generator: {
     name: "Réacteur organique", shortName: "ÉNERGIE",

@@ -35,7 +35,7 @@ interface BoatVisual {
 }
 
 const BUILD_SHORTCUTS: Partial<Record<string, BuildingType>> = {
-  g: "generator", x: "storage", v: "vat", b: "bioExtractor", o: "oreExtractor",
+  n: "core", g: "generator", x: "storage", v: "vat", b: "bioExtractor", o: "oreExtractor",
   c: "conveyor", r: "relay", t: "turret", l: "lab", f: "wall", u: "waterExtractor", j: "port",
 };
 

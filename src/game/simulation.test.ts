@@ -57,14 +57,13 @@ function activeCore(id: number, region: Region): Building {
 }
 
 describe("GameSimulation", () => {
-  it("deploys two complete bases and starts a powered match", () => {
+  it("deploys an unbuilt player colony with enough resources to establish it", () => {
     const simulation = new GameSimulation(123456);
     const regionId = deploy(simulation);
-    simulation.tick();
 
     expect(simulation.phase).toBe("playing");
     expect(simulation.regions.find((region) => region.id === regionId)?.owner).toBe("player");
-    expect(simulation.buildings.filter((building) => building.faction === "player")).toHaveLength(4);
+    expect(simulation.buildings.filter((building) => building.faction === "player")).toHaveLength(0);
     expect(simulation.buildings.filter((building) => building.faction === "enemy")).toHaveLength(4);
     expect(simulation.units.filter((unit) => unit.faction === "player")).toHaveLength(4);
     const playerSquads = new Map<number, number>();
@@ -72,9 +71,17 @@ describe("GameSimulation", () => {
       playerSquads.set(unit.squadId, (playerSquads.get(unit.squadId) ?? 0) + 1);
     }
     expect([...playerSquads.values()]).toEqual([4]);
+    expect(simulation.resources.player).toMatchObject({ biomass: 180, ore: 220, water: 0 });
+
+    const region = simulation.regions.find((candidate) => candidate.id === regionId)!;
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "core", position: region.center })).toBe(true);
+    expect(simulation.buildings.filter((building) => building.faction === "player" && building.type === "core")).toHaveLength(1);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "core", position: { x: region.center.x + 10, z: region.center.z } })).toBe(false);
+
+    for (let index = 0; index < TICK_RATE * 4; index += 1) simulation.tick();
     expect(simulation.resources.player.energyProduced).toBeGreaterThan(0);
-    expect(simulation.resources.player.biomass).toBeGreaterThan(90);
-    expect(simulation.resources.player.ore).toBeGreaterThan(95);
+    expect(simulation.resources.player.biomass).toBeGreaterThan(180);
+    expect(simulation.resources.player.ore).toBeGreaterThan(220);
   });
 
   it("spawns the configured number of rival colonies", () => {
@@ -135,10 +142,9 @@ describe("GameSimulation", () => {
     expect(second.regions.find((region) => region.id === regionId)?.startCandidate).toBe(true);
     first.applyPlayerCommand({ type: "deploy", regionId });
     second.applyPlayerCommand({ type: "deploy", regionId });
-    const firstVat = first.buildings.find((building) => building.faction === "player" && building.type === "vat")!;
-    const secondVat = second.buildings.find((building) => building.faction === "player" && building.type === "vat")!;
-    first.applyPlayerCommand({ type: "queueClone", buildingId: firstVat.id, unitType: "scout" });
-    second.applyPlayerCommand({ type: "queueClone", buildingId: secondVat.id, unitType: "scout" });
+    const position = first.regions.find((candidate) => candidate.id === regionId)!.center;
+    first.applyPlayerCommand({ type: "placeBuilding", buildingType: "core", position });
+    second.applyPlayerCommand({ type: "placeBuilding", buildingType: "core", position });
 
     for (let index = 0; index < TICK_RATE * 12; index += 1) {
       first.tick();
@@ -175,11 +181,15 @@ describe("GameSimulation", () => {
 
   it("delivers extracted material only after a conveyor route is built", () => {
     const simulation = new GameSimulation(0x10203040);
-    deploy(simulation);
+    const regionId = deploy(simulation);
     simulation.resources.player.biomass = 500;
     simulation.resources.player.ore = 500;
-    const storage = simulation.buildings.find((building) => building.faction === "player" && building.type === "storage")!;
-    const region = simulation.regions.find((candidate) => candidate.id === storage.regionId)!;
+    const region = simulation.regions.find((candidate) => candidate.id === regionId)!;
+    const addBuilding = simulation as unknown as {
+      addBuilding: (faction: "player", type: "core" | "storage", position: { x: number; z: number }, regionId: number, complete: boolean) => Building;
+    };
+    addBuilding.addBuilding("player", "core", { x: region.center.x - 7.5, z: region.center.z }, region.id, true);
+    const storage = addBuilding.addBuilding("player", "storage", { x: region.center.x + 7.5, z: region.center.z }, region.id, true);
     let placed = false;
     for (let dx = -12.5; dx <= 12.5 && !placed; dx += 2.5) {
       for (let dz = -12.5; dz <= 12.5 && !placed; dz += 2.5) {
@@ -245,9 +255,9 @@ describe("GameSimulation", () => {
     const destination = simulation.regions.find((region) =>
       region.biome !== "water" && region.id !== origin.id && !landReachable(simulation.regions, origin.id, region.id),
     )!;
-    simulation.buildings.push(activePort(8101, origin), activeCore(8102, destination), activePort(8103, destination));
+    simulation.buildings.push(activeCore(8100, origin), activePort(8101, origin), activeCore(8102, destination), activePort(8103, destination));
     const initialOre = simulation.resources.player.ore;
-    for (let index = 0; index < TICK_RATE * 22; index += 1) simulation.tick();
+    for (let index = 0; index < TICK_RATE * 40; index += 1) simulation.tick();
 
     expect(simulation.resources.player.ore).toBeGreaterThan(initialOre + 3);
     expect(simulation.stats.portTradesCompleted).toBeGreaterThan(0);

@@ -11,7 +11,7 @@ interface HudProps {
 }
 
 const BUILD_ORDER: BuildingType[] = [
-  "bioExtractor", "oreExtractor", "conveyor", "generator", "storage",
+  "core", "bioExtractor", "oreExtractor", "conveyor", "generator", "storage",
   "waterExtractor", "port", "vat", "relay", "turret", "lab", "wall",
 ];
 const UNIT_ORDER: UnitType[] = ["worker", "scout", "assault", "breaker"];
@@ -37,8 +37,8 @@ function TutorialProtocol({ snapshot, visible }: { snapshot: GameSnapshot; visib
   const playerBuildings = snapshot.buildings.filter((building) => building.faction === "player");
   const playerUnits = snapshot.units.filter((unit) => unit.faction === "player");
   const steps = [
-    { label: "ÉRIGER UN EXTRACTEUR", done: playerBuildings.some((building) => building.type === "bioExtractor" || building.type === "oreExtractor") },
-    { label: "RELIER AU STOCKAGE", done: playerBuildings.filter((building) => building.type === "conveyor").length >= 2 },
+    { label: "IMPLANTER LE NOYAU", done: playerBuildings.some((building) => building.type === "core") },
+    { label: "EXTRAIRE ET STOCKER", done: playerBuildings.some((building) => building.type === "storage") && playerBuildings.some((building) => building.type === "bioExtractor" || building.type === "oreExtractor") },
     { label: "PRODUIRE UN CLONE", done: snapshot.stats.clonesProduced > 0 || playerUnits.length > 4 },
     { label: "ASSIMILER UN SECTEUR", done: snapshot.regions.filter((region) => region.owner === "player").length > 1 },
     { label: "DÉTRUIRE LE NOYAU RIVAL", done: snapshot.phase === "victory" },
@@ -65,13 +65,14 @@ function BuildDock({ state, snapshot }: HudProps) {
         {BUILD_ORDER.map((type, index) => {
           const definition = BUILDINGS[type];
           const affordable = (definition.cost.biomass ?? 0) <= stock.biomass && (definition.cost.ore ?? 0) <= stock.ore;
+          const coreAlreadyPlaced = type === "core" && snapshot.buildings.some((building) => building.faction === "player" && building.type === "core");
           const active = state.selectedBuildType === type;
           return (
             <button
               type="button"
               key={type}
               className={active ? "active" : ""}
-              disabled={!affordable}
+              disabled={!affordable || coreAlreadyPlaced}
               onClick={() => gameSession.setBuildType(active ? null : type)}
               title={`${definition.name} — ${definition.description}`}
             >

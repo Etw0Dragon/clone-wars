@@ -33,7 +33,7 @@ export function DeploymentOverlay({ state }: DeploymentOverlayProps) {
         </p>
         <div className="deploy-step"><span>01</span><p>Inspecter les rendements</p></div>
         <div className="deploy-step"><span>02</span><p>Cliquer une région viable</p></div>
-        <div className="deploy-step"><span>03</span><p>Déployer le noyau</p></div>
+        <div className="deploy-step"><span>03</span><p>Déployer l'équipe</p></div>
       </section>
 
       <section className={`region-dossier ${focus ? "is-visible" : ""}`}>
@@ -63,7 +63,7 @@ export function DeploymentOverlay({ state }: DeploymentOverlayProps) {
           <strong>{selected?.name ?? "AUCUNE"}</strong>
         </div>
         <button type="button" disabled={!selected} onClick={() => gameSession.deploy()}>
-          DÉPLOYER LE NOYAU <span>↗</span>
+          DÉPLOYER L'ÉQUIPE <span>↗</span>
         </button>
       </div>
     </div>

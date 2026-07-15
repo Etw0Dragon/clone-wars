@@ -39,8 +39,8 @@ function StartTab() {
       </div>
       <div className="guide-steps">
         <article><span>01</span><div><h3>Choisir un tissu</h3><p>Cliquez une région cerclée sur la carte. La forêt produit beaucoup de biomasse, la carrière beaucoup de minerai, la faille beaucoup d’énergie. Une plaine est équilibrée.</p></div></article>
-        <article><span>02</span><div><h3>Déployer le noyau</h3><p>Validez en bas à droite. Votre base commence avec un noyau, un générateur, un stockage, une cuve de clonage et quatre ouvriers.</p></div></article>
-        <article><span>03</span><div><h3>Faire circuler la matière</h3><p>Construisez une moissonneuse <kbd>B</kbd> et une foreuse <kbd>O</kbd>, puis reliez-les au stockage avec plusieurs convoyeurs <kbd>C</kbd>. Sans trajet, un extracteur ne livre rien.</p></div></article>
+        <article><span>02</span><div><h3>Déployer l'équipe</h3><p>Validez en bas à droite. Vous recevez quatre ouvriers et un stock de départ : aucun bâtiment n'est préinstallé.</p></div></article>
+        <article><span>03</span><div><h3>Ériger la colonie</h3><p>Placez d'abord le noyau <kbd>N</kbd>, puis une moissonneuse <kbd>B</kbd>, une foreuse <kbd>O</kbd> et un stockage. Reliez les extracteurs au stockage avec des convoyeurs <kbd>C</kbd>.</p></div></article>
         <article><span>04</span><div><h3>Multiplier la force</h3><p>Cliquez la cuve violette/verte, puis ajoutez des clones dans sa file. Commencez par des éclaireurs et des clones d’assaut.</p></div></article>
         <article><span>05</span><div><h3>Prendre l’initiative</h3><p>Sélectionnez vos clones par clic ou rectangle. Clic droit pour avancer, Maj + clic droit pour attaquer en mouvement. Envoyez une escouade dans une région neutre pour la capturer.</p></div></article>
       </div>
