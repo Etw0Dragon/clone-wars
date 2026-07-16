@@ -1,9 +1,12 @@
 export type FactionId = "player" | "enemy";
 export type RegionOwner = FactionId | "neutral";
 export type MapPreset = "compact" | "standard" | "frontier";
+export type MatchMode = "classic" | "frontline";
+export type FrontlineAttackMode = "invasion" | "rush" | "siege" | "defense";
 export interface MatchConfig {
   mapPreset: MapPreset;
   aiCount: number;
+  mode?: MatchMode;
 }
 export type GamePhase =
   | "deployment"
@@ -66,6 +69,9 @@ export interface Region {
   visible: boolean;
   startCandidate: boolean;
   elevation: number;
+  garrison: Record<FactionId, number>;
+  defense: Record<FactionId, number>;
+  neutralStrength: number;
 }
 
 export interface ResourceStock {
@@ -121,6 +127,20 @@ export interface Unit {
   visible: boolean;
   embarkedIn: number | null;
   kills: number;
+  frontlineOperationId?: number;
+}
+
+export interface FrontlineAttack {
+  id: number;
+  faction: FactionId;
+  sourceRegionId: number;
+  targetRegionId: number;
+  mode: FrontlineAttackMode;
+  amount: number;
+  remaining: number;
+  progress: number;
+  state: "marching" | "engaging";
+  casualties: number;
 }
 
 export interface Boat {
@@ -200,6 +220,7 @@ export interface GameSnapshot {
   seed: number;
   mapPreset: MapPreset;
   aiCount: number;
+  mode: MatchMode;
   tick: number;
   elapsedSeconds: number;
   phase: GamePhase;
@@ -212,6 +233,7 @@ export interface GameSnapshot {
   tradeShips: TradeShip[];
   cargo: CargoPacket[];
   projectiles: Projectile[];
+  frontlineAttacks: FrontlineAttack[];
   resources: Record<FactionId, ResourceStock>;
   mutations: Record<FactionId, MutationId[]>;
   mutationChoices: MutationChoice[];
@@ -232,7 +254,20 @@ export type PlayerCommand =
   | { type: "setOrder"; unitIds: number[]; order: UnitOrder }
   | { type: "chooseMutation"; mutationId: MutationId }
   | { type: "repair"; buildingId: number }
-  | { type: "sell"; buildingId: number };
+  | { type: "sell"; buildingId: number }
+  | {
+      type: "launchAttack";
+      sourceRegionId: number;
+      targetRegionId: number;
+      mode: FrontlineAttackMode;
+      percentage: 10 | 25 | 50 | 75;
+    }
+  | {
+      type: "transferGarrison";
+      sourceRegionId: number;
+      targetRegionId: number;
+      percentage: 10 | 25 | 50 | 75;
+    };
 
 export interface WorkerInitMessage {
   type: "init";

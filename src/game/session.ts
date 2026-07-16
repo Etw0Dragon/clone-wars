@@ -3,6 +3,7 @@ import type {
   BoatType,
   GameSnapshot,
   MatchConfig,
+  FrontlineAttackMode,
   MutationId,
   PlayerCommand,
   UnitOrder,
@@ -241,6 +242,19 @@ class GameSession {
   issueBoatOrder(target: Vec2): void {
     if (this.state.selectedBoatId === null) return;
     this.command({ type: "setBoatOrder", boatId: this.state.selectedBoatId, target });
+  }
+
+  launchFrontlineAttack(targetRegionId: number, mode: FrontlineAttackMode, percentage: 10 | 25 | 50 | 75, sourceRegionId?: number | null): void {
+    const snapshot = this.latestSnapshot;
+    const source = sourceRegionId ?? this.state.selectedRegionId;
+    if (!snapshot || source === null || source === undefined || snapshot.mode !== "frontline") return;
+    this.command({ type: "launchAttack", sourceRegionId: source, targetRegionId, mode, percentage });
+  }
+
+  transferFrontlineGarrison(targetRegionId: number, sourceRegionId: number, percentage: 10 | 25 | 50 | 75): void {
+    const snapshot = this.latestSnapshot;
+    if (!snapshot || snapshot.mode !== "frontline") return;
+    this.command({ type: "transferGarrison", sourceRegionId, targetRegionId, percentage });
   }
 
   chooseMutation(mutationId: MutationId): void {

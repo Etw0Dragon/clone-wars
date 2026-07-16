@@ -14,6 +14,14 @@ export const MAP_HALF_SIZE = 50;
 export const BUILD_GRID = 2.5;
 export const CORE_SHIELD_SECONDS = 75;
 export const MAX_UNITS_PER_FACTION = 200;
+export const FRONTLINE_MAX_GARRISON = 480;
+export const FRONTLINE_STARTING_GARRISON = 320;
+export const FRONTLINE_NEUTRAL_GARRISON = 120;
+export const FRONTLINE_ATTACK_PERCENTAGES = [10, 25, 50, 75] as const;
+export const FRONTLINE_MAX_EXTRACTORS = 3;
+export const FRONTLINE_MAX_MILITARY_BUILDINGS = 1;
+export const FRONTLINE_MAX_TURRETS = 1;
+export const FRONTLINE_RESOURCE_RATE = 0.85;
 export const PLAYER_STARTING_RESOURCES = { biomass: 180, ore: 220, water: 0 };
 export const ANCHOR_CAPTURE_RADIUS = 4.6;
 export const ANCHOR_CAPTURE_SECONDS = 9;
@@ -32,6 +40,20 @@ export interface BiomeDefinition {
   description: string;
   yields: Record<"biomass" | "ore" | "water" | "energy", number>;
 }
+
+export interface FrontlineTerrainProfile {
+  neutralGarrison: number;
+  neutralFortification: number;
+  difficulty: "low" | "medium" | "high";
+}
+
+export const FRONTLINE_TERRAIN_PROFILES: Record<BiomeId, FrontlineTerrainProfile> = {
+  forest: { neutralGarrison: 108, neutralFortification: 1, difficulty: "medium" },
+  quarry: { neutralGarrison: 158, neutralFortification: 1.2, difficulty: "high" },
+  geothermal: { neutralGarrison: 132, neutralFortification: 1.1, difficulty: "high" },
+  plains: { neutralGarrison: 78, neutralFortification: 0.88, difficulty: "low" },
+  water: { neutralGarrison: 0, neutralFortification: 0, difficulty: "low" },
+};
 
 export const BIOMES: Record<BiomeId, BiomeDefinition> = {
   forest: {

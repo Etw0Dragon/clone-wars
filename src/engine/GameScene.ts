@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BIOMES, BOATS, BUILDINGS, BUILD_GRID, FACTION_COLORS, MAP_HALF_SIZE } from "../game/config";
+import { BIOMES, BOATS, BUILDINGS, BUILD_GRID, FACTION_COLORS, FRONTLINE_MAX_EXTRACTORS, FRONTLINE_MAX_MILITARY_BUILDINGS, FRONTLINE_MAX_TURRETS, MAP_HALF_SIZE } from "../game/config";
 import { pointInPolygon } from "../game/map";
 import { gameSession } from "../game/session";
 import { loadSettings } from "../game/persistence";
@@ -38,6 +38,18 @@ interface SquadBlobVisual {
   group: THREE.Group;
   faction: FactionId;
   count: number;
+}
+
+interface FrontlineTraceVisual {
+  group: THREE.Group;
+  line: THREE.Line;
+  guide: THREE.Line;
+  head: THREE.Mesh;
+  ring: THREE.Mesh;
+  faction: FactionId;
+  phase: number;
+  pathKey: string;
+  pathPointCount: number;
 }
 
 const BUILD_SHORTCUTS: Partial<Record<string, BuildingType>> = {
@@ -295,6 +307,7 @@ export class GameScene {
   private readonly projectileGroup = new THREE.Group();
   private readonly selectionGroup = new THREE.Group();
   private readonly squadMarkerGroup = new THREE.Group();
+  private readonly frontlineTraceGroup = new THREE.Group();
   private readonly anchorGroup = new THREE.Group();
   private readonly squadBlobGroup = new THREE.Group();
   private readonly ground: THREE.Mesh;
@@ -306,6 +319,11 @@ export class GameScene {
   private unitMeshes = new Map<string, THREE.InstancedMesh>();
   private unitIdsByMesh = new Map<THREE.InstancedMesh, number[]>();
   private squadMarkers = new Map<string, THREE.Sprite>();
+  private frontlineLabels = new Map<string, THREE.Sprite>();
+  private frontlineTraces = new Map<number, FrontlineTraceVisual>();
+  private cargoVisuals = new Map<number, THREE.Mesh>();
+  private tradeShipVisuals = new Map<number, THREE.Mesh>();
+  private projectileVisuals = new Map<number, THREE.Mesh>();
   private anchorVisuals = new Map<number, THREE.Group>();
   private squadBlobs = new Map<string, SquadBlobVisual>();
   private selectionRings = new Map<string, THREE.Mesh>();
@@ -317,6 +335,7 @@ export class GameScene {
   private zoom = 1;
   private cameraAngle = Math.PI / 4;
   private keyState = new Set<string>();
+  private readonly unitDummy = new THREE.Object3D();
   private controlGroups = new Map<number, number[]>();
   private dragStart: { x: number; y: number } | null = null;
   private dragCurrent: { x: number; y: number } | null = null;
@@ -326,6 +345,7 @@ export class GameScene {
   private ghostType: BuildingType | null = null;
   private combatSequenceActive = false;
   private combatSignalExpiresAtTick = 0;
+  private lastRegionVisualKey = "";
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -362,7 +382,7 @@ export class GameScene {
     this.ground.position.y = 0.08;
     this.ground.name = "command-ground";
     this.scene.add(this.ground);
-    this.scene.add(this.regionGroup, this.anchorGroup, this.buildingGroup, this.cargoGroup, this.projectileGroup, this.selectionGroup, this.squadBlobGroup, this.squadMarkerGroup);
+    this.scene.add(this.regionGroup, this.anchorGroup, this.buildingGroup, this.cargoGroup, this.projectileGroup, this.selectionGroup, this.frontlineTraceGroup, this.squadBlobGroup, this.squadMarkerGroup);
 
     const grid = new THREE.GridHelper(MAP_HALF_SIZE * 2, 40, "#89906c", "#394037");
     grid.position.y = 0.09;
@@ -385,7 +405,10 @@ export class GameScene {
     this.resizeObserver.disconnect();
     this.snapshotUnsubscribe?.();
     this.clearSquadMarkers();
+    this.clearFrontlineLabels();
+    this.clearFrontlineTraces();
     this.clearSquadBlobs();
+    this.clearTransientVisuals();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -440,11 +463,17 @@ export class GameScene {
   private handleSnapshot = (snapshot: GameSnapshot): void => {
     const firstMap = !this.snapshot || this.snapshot.seed !== snapshot.seed;
     this.snapshot = snapshot;
-    if (firstMap) this.buildRegions(snapshot.regions);
+    if (firstMap) {
+      this.buildRegions(snapshot.regions);
+      this.clearFrontlineLabels();
+      this.clearFrontlineTraces();
+    }
     this.updateRegions(snapshot.regions);
     this.updateBuildings(snapshot.buildings);
     this.updateBoats(snapshot.boats);
     this.updateUnitTargets(snapshot.units);
+    this.updateFrontlineTraces();
+    this.updateFrontlineLabels();
     this.updateTransientObjects();
     this.syncCombatFocus(snapshot);
   };
@@ -475,6 +504,7 @@ export class GameScene {
     this.regionMeshes.clear();
     this.startRings.clear();
     this.anchorVisuals.clear();
+    this.lastRegionVisualKey = "";
     for (const region of regions) {
       const shape = new THREE.Shape();
       const first = region.vertices[0];
@@ -563,6 +593,9 @@ export class GameScene {
 
   private updateRegions(regions: Region[]): void {
     const state = gameSession.getState();
+    const visualKey = `${this.snapshot?.tick ?? -1}:${state.selectedStartRegionId ?? "-"}:${state.hoveredRegionId ?? "-"}`;
+    if (visualKey === this.lastRegionVisualKey) return;
+    this.lastRegionVisualKey = visualKey;
     for (const region of regions) {
       const mesh = this.regionMeshes.get(region.id);
       if (!mesh) continue;
@@ -741,7 +774,6 @@ export class GameScene {
       if (!activeBlobs.has(key)) this.removeSquadBlob(key);
     }
     this.updateSquadMarkers(markers);
-    const dummy = new THREE.Object3D();
     for (const faction of ["player", "enemy"] as const) {
       for (const type of ["worker", "scout", "assault", "breaker"] as const) {
         const key = `${faction}:${type}`;
@@ -750,12 +782,12 @@ export class GameScene {
         const ids: number[] = [];
         for (let index = 0; index < visuals.length; index += 1) {
           const visual = visuals[index]!;
-          dummy.position.copy(visual.current);
-          dummy.rotation.set(type === "scout" ? Math.PI : 0, visual.heading, 0);
+          this.unitDummy.position.copy(visual.current);
+          this.unitDummy.rotation.set(type === "scout" ? Math.PI : 0, visual.heading, 0);
           const pulse = this.settings.reducedMotion ? 1 : 1 + Math.sin(this.clock.elapsedTime * 3 + visual.id) * 0.025;
-          dummy.scale.setScalar(pulse);
-          dummy.updateMatrix();
-          mesh.setMatrixAt(index, dummy.matrix);
+          this.unitDummy.scale.setScalar(pulse);
+          this.unitDummy.updateMatrix();
+          mesh.setMatrixAt(index, this.unitDummy.matrix);
           ids.push(visual.id);
         }
         mesh.count = visuals.length;
@@ -888,35 +920,309 @@ export class GameScene {
     for (const key of [...this.squadMarkers.keys()]) this.removeSquadMarker(key);
   }
 
+  private updateFrontlineTraces(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || snapshot.mode !== "frontline") {
+      this.clearFrontlineTraces();
+      return;
+    }
+
+    const retained = new Set<number>();
+    for (const attack of snapshot.frontlineAttacks) {
+      if (attack.mode === "defense" || attack.remaining <= 0) continue;
+      const source = snapshot.regions.find((region) => region.id === attack.sourceRegionId);
+      const target = snapshot.regions.find((region) => region.id === attack.targetRegionId);
+      if (!source || !target) continue;
+
+      retained.add(attack.id);
+      let trace = this.frontlineTraces.get(attack.id);
+      if (!trace) {
+        trace = this.createFrontlineTrace(attack.faction, attack.id);
+        this.frontlineTraceGroup.add(trace.group);
+        this.frontlineTraces.set(attack.id, trace);
+      }
+
+      const pathKey = `${source.id}:${target.id}`;
+      if (trace.pathKey !== pathKey) {
+        const points = this.createFrontlineTracePoints(source.center, target.center);
+        const guideGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        trace.guide.geometry.dispose();
+        trace.guide.geometry = guideGeometry;
+        trace.line.geometry.dispose();
+        trace.line.geometry = lineGeometry;
+        trace.line.computeLineDistances();
+        trace.pathKey = pathKey;
+        trace.pathPointCount = points.length;
+      }
+      trace.line.geometry.setDrawRange(0, Math.max(2, Math.ceil(trace.pathPointCount * Math.max(0.02, attack.progress))));
+
+      const head = this.frontlineAttackPosition(snapshot, attack);
+      if (head) {
+        trace.head.position.copy(head);
+        trace.ring.position.set(head.x, head.y - 0.22, head.z);
+      }
+    }
+    for (const id of [...this.frontlineTraces.keys()]) {
+      if (!retained.has(id)) this.removeFrontlineTrace(id);
+    }
+  }
+
+  private createFrontlineTrace(faction: FactionId, attackId: number): FrontlineTraceVisual {
+    const group = new THREE.Group();
+    const color = FACTION_COLORS[faction];
+    const guide = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.16, depthTest: false }),
+    );
+    const line = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({
+        color,
+        dashSize: 1.15,
+        gapSize: 0.7,
+        scale: 1,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+      }),
+    );
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 12, 8),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false }),
+    );
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.62, 0.045, 6, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, depthTest: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    group.add(guide, line, head, ring);
+    group.renderOrder = 8;
+    guide.renderOrder = 8;
+    line.renderOrder = 9;
+    head.renderOrder = 10;
+    ring.renderOrder = 9;
+    return { group, line, guide, head, ring, faction, phase: attackId * 0.73, pathKey: "", pathPointCount: 0 };
+  }
+
+  private createFrontlineTracePoints(source: { x: number; z: number }, target: { x: number; z: number }): THREE.Vector3[] {
+    const points: THREE.Vector3[] = [];
+    const steps = 28;
+    for (let index = 0; index <= steps; index += 1) {
+      const progress = index / steps;
+      const position = {
+        x: source.x + (target.x - source.x) * progress,
+        z: source.z + (target.z - source.z) * progress,
+      };
+      const terrain = this.terrainHeightAt(position);
+      points.push(new THREE.Vector3(position.x, terrain + 0.34 + Math.sin(progress * Math.PI) * 0.14, position.z));
+    }
+    return points;
+  }
+
+  private frontlineAttackPosition(snapshot: GameSnapshot, attack: GameSnapshot["frontlineAttacks"][number]): THREE.Vector3 | null {
+    const source = snapshot.regions.find((region) => region.id === attack.sourceRegionId);
+    const target = snapshot.regions.find((region) => region.id === attack.targetRegionId);
+    if (!source || !target) return null;
+    const operationUnits = snapshot.units.filter((unit) => unit.frontlineOperationId === attack.id);
+    const position = operationUnits.length > 0
+      ? operationUnits.reduce((sum, unit) => sum.add(new THREE.Vector3(unit.position.x, 0, unit.position.z)), new THREE.Vector3())
+        .multiplyScalar(1 / operationUnits.length)
+      : new THREE.Vector3(
+        source.center.x + (target.center.x - source.center.x) * attack.progress,
+        0,
+        source.center.z + (target.center.z - source.center.z) * attack.progress,
+      );
+    position.y = this.terrainHeightAt({ x: position.x, z: position.z }) + 0.78;
+    return position;
+  }
+
+  private removeFrontlineTrace(id: number): void {
+    const trace = this.frontlineTraces.get(id);
+    if (!trace) return;
+    this.frontlineTraceGroup.remove(trace.group);
+    this.disposeObject(trace.group);
+    this.frontlineTraces.delete(id);
+  }
+
+  private clearFrontlineTraces(): void {
+    for (const id of [...this.frontlineTraces.keys()]) this.removeFrontlineTrace(id);
+  }
+
+  private updateFrontlineLabels(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || snapshot.mode !== "frontline") {
+      this.clearFrontlineLabels();
+      return;
+    }
+
+    const labels: Array<{ key: string; faction: FactionId; text: string; position: THREE.Vector3 }> = [];
+    for (const region of snapshot.regions) {
+      if (region.biome === "water" || region.owner === "neutral" || region.garrison[region.owner] <= 0) continue;
+      labels.push({
+        key: `def:${region.id}`,
+        faction: region.owner,
+        text: `DEF ${this.formatCloneCount(region.garrison[region.owner])}`,
+        position: new THREE.Vector3(region.center.x, this.terrainHeight(region.id) + 4.45, region.center.z),
+      });
+    }
+
+    for (const attack of snapshot.frontlineAttacks) {
+      if (attack.mode === "defense" || attack.remaining <= 0) continue;
+      const source = snapshot.regions.find((region) => region.id === attack.sourceRegionId);
+      const target = snapshot.regions.find((region) => region.id === attack.targetRegionId);
+      if (!source || !target) continue;
+
+      const position = this.frontlineAttackPosition(snapshot, attack);
+      if (!position) continue;
+      position.y += 1.57;
+      labels.push({
+        key: `atk:${attack.id}`,
+        faction: attack.faction,
+        text: `ATK ${this.formatCloneCount(attack.remaining)}`,
+        position,
+      });
+    }
+
+    const retained = new Set<string>();
+    for (const label of labels) {
+      retained.add(label.key);
+      let sprite = this.frontlineLabels.get(label.key);
+      if (!sprite || sprite.userData.text !== label.text || sprite.userData.faction !== label.faction) {
+        if (sprite) this.removeFrontlineLabel(label.key);
+        sprite = this.createFrontlineLabel(label.faction, label.text);
+        this.squadMarkerGroup.add(sprite);
+        this.frontlineLabels.set(label.key, sprite);
+      }
+      sprite.position.copy(label.position);
+    }
+    for (const key of [...this.frontlineLabels.keys()]) {
+      if (!retained.has(key)) this.removeFrontlineLabel(key);
+    }
+  }
+
+  private formatCloneCount(count: number): string {
+    return Math.max(0, Math.round(count)).toLocaleString("fr-FR");
+  }
+
+  private createFrontlineLabel(faction: FactionId, text: string): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "rgba(8, 11, 8, 0.94)";
+    context.fillRect(8, 8, 240, 48);
+    context.fillStyle = FACTION_COLORS[faction];
+    context.fillRect(8, 8, 6, 48);
+    context.strokeStyle = FACTION_COLORS[faction];
+    context.lineWidth = 3;
+    context.strokeRect(9.5, 9.5, 237, 45);
+    context.fillStyle = "#f4f0d5";
+    context.font = `bold ${text.length > 11 ? 18 : 22}px monospace`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, 132, 33);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(4.25, 1.06, 1);
+    sprite.renderOrder = 14;
+    sprite.userData.text = text;
+    sprite.userData.faction = faction;
+    return sprite;
+  }
+
+  private removeFrontlineLabel(key: string): void {
+    const sprite = this.frontlineLabels.get(key);
+    if (!sprite) return;
+    this.squadMarkerGroup.remove(sprite);
+    const material = sprite.material as THREE.SpriteMaterial;
+    material.map?.dispose();
+    material.dispose();
+    this.frontlineLabels.delete(key);
+  }
+
+  private clearFrontlineLabels(): void {
+    for (const key of [...this.frontlineLabels.keys()]) this.removeFrontlineLabel(key);
+  }
+
   private updateTransientObjects(): void {
     if (!this.snapshot) return;
-    for (const child of [...this.cargoGroup.children]) this.disposeObject(child);
-    this.cargoGroup.clear();
+    const cargoIds = new Set(this.snapshot.cargo.map((packet) => packet.id));
+    for (const [id, mesh] of this.cargoVisuals) {
+      if (cargoIds.has(id)) continue;
+      this.cargoGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.cargoVisuals.delete(id);
+    }
     for (const packet of this.snapshot.cargo) {
-      const material = new THREE.MeshBasicMaterial({ color: packet.resource === "biomass" ? "#b9ff59" : packet.resource === "water" ? "#72d6ff" : "#efb26b" });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.36, 0.36), material);
+      let mesh = this.cargoVisuals.get(packet.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.36, 0.36, 0.36),
+          new THREE.MeshBasicMaterial(),
+        );
+        this.cargoGroup.add(mesh);
+        this.cargoVisuals.set(packet.id, mesh);
+      }
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.color.set(packet.resource === "biomass" ? "#b9ff59" : packet.resource === "water" ? "#72d6ff" : "#efb26b");
       mesh.position.set(packet.position.x, 0.64, packet.position.z);
-      this.cargoGroup.add(mesh);
+    }
+    const tradeShipIds = new Set(this.snapshot.tradeShips.map((ship) => ship.id));
+    for (const [id, mesh] of this.tradeShipVisuals) {
+      if (tradeShipIds.has(id)) continue;
+      this.cargoGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.tradeShipVisuals.delete(id);
     }
     for (const ship of this.snapshot.tradeShips) {
-      const mesh = new THREE.Mesh(
-        new THREE.ConeGeometry(0.46, 1.2, 4),
-        new THREE.MeshBasicMaterial({ color: ship.faction === "player" ? "#a9e9ff" : "#ffb36b" }),
-      );
+      let mesh = this.tradeShipVisuals.get(ship.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.ConeGeometry(0.46, 1.2, 4), new THREE.MeshBasicMaterial());
+        this.cargoGroup.add(mesh);
+        this.tradeShipVisuals.set(ship.id, mesh);
+      }
+      (mesh.material as THREE.MeshBasicMaterial).color.set(ship.faction === "player" ? "#a9e9ff" : "#ffb36b");
       mesh.rotation.x = Math.PI / 2;
       mesh.rotation.z = Math.atan2(ship.velocity.z, ship.velocity.x) - Math.PI / 2;
       mesh.position.set(ship.position.x, 0.72, ship.position.z);
-      this.cargoGroup.add(mesh);
     }
-    for (const child of [...this.projectileGroup.children]) this.disposeObject(child);
-    this.projectileGroup.clear();
+    const projectileIds = new Set(this.snapshot.projectiles.map((projectile) => projectile.id));
+    for (const [id, mesh] of this.projectileVisuals) {
+      if (projectileIds.has(id)) continue;
+      this.projectileGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.projectileVisuals.delete(id);
+    }
     for (const projectile of this.snapshot.projectiles) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.18, 5, 4),
-        new THREE.MeshBasicMaterial({ color: projectile.color }),
-      );
+      let mesh = this.projectileVisuals.get(projectile.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 5, 4), new THREE.MeshBasicMaterial());
+        this.projectileGroup.add(mesh);
+        this.projectileVisuals.set(projectile.id, mesh);
+      }
+      (mesh.material as THREE.MeshBasicMaterial).color.set(projectile.color);
       mesh.position.set(projectile.position.x, 1.1, projectile.position.z);
-      this.projectileGroup.add(mesh);
+    }
+  }
+
+  private clearTransientVisuals(): void {
+    for (const [id, mesh] of this.cargoVisuals) {
+      this.cargoGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.cargoVisuals.delete(id);
+    }
+    for (const [id, mesh] of this.tradeShipVisuals) {
+      this.cargoGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.tradeShipVisuals.delete(id);
+    }
+    for (const [id, mesh] of this.projectileVisuals) {
+      this.projectileGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.projectileVisuals.delete(id);
     }
   }
 
@@ -1037,7 +1343,8 @@ export class GameScene {
     const definition = BUILDINGS[type];
     const region = snapshot?.regions.find((candidate) => pointInPolygon(position, candidate.vertices));
     this.ghost.rotation.y = this.previewOrientation(type, position, region);
-    const hasWorker = (region?.workers.player ?? 0) > 0;
+    const frontline = snapshot?.mode === "frontline";
+    const hasWorker = frontline || (region?.workers.player ?? 0) > 0;
     const clear = !snapshot?.buildings.some((building) => {
       const factor = type === "conveyor" || building.type === "conveyor" ? 0.39 : 0.57;
       const minimum = (definition.size + BUILDINGS[building.type].size) * factor;
@@ -1047,11 +1354,23 @@ export class GameScene {
       (definition.cost.biomass ?? 0) <= snapshot.resources.player.biomass &&
       (definition.cost.ore ?? 0) <= snapshot.resources.player.ore &&
       (definition.cost.water ?? 0) <= snapshot.resources.player.water;
-    const needsWater = type === "waterExtractor" || type === "port";
+    const needsWater = !frontline && (type === "waterExtractor" || type === "port");
     const hasWaterAccess = !needsWater || !!region?.neighbors.some((id) => snapshot?.regions.find((candidate) => candidate.id === id)?.biome === "water");
     const controlsClaim = !!region && region.anchors.filter((anchor) => anchor.owner === "player").length >= Math.ceil(region.anchors.length / 2);
-    const validTerritory = region?.owner === "player" || (type === "relay" && controlsClaim);
-    const valid = !!region && validTerritory && region.biome !== "water" && hasWorker && clear && affordable && hasWaterAccess;
+    const sectorBuildings = snapshot?.buildings.filter((building) => building.faction === "player" && building.regionId === region?.id && building.type !== "core") ?? [];
+    const extractorCount = sectorBuildings.filter((building) => building.type === "extractor").length;
+    const militaryCount = sectorBuildings.filter((building) => building.type === "turret" || building.type === "wall").length;
+    const turretCount = sectorBuildings.filter((building) => building.type === "turret").length;
+    const uniqueSupport = type === "vat" || type === "relay" || type === "port";
+    const uniqueSupportTaken = uniqueSupport && sectorBuildings.some((building) => building.type === type);
+    const frontlineSlotFree = !frontline || (
+      type === "extractor" ? extractorCount < FRONTLINE_MAX_EXTRACTORS :
+      type === "turret" ? turretCount < FRONTLINE_MAX_TURRETS && militaryCount < FRONTLINE_MAX_MILITARY_BUILDINGS :
+      type === "wall" ? militaryCount < FRONTLINE_MAX_MILITARY_BUILDINGS :
+      !uniqueSupportTaken
+    );
+    const validTerritory = region?.owner === "player" || (!frontline && type === "relay" && controlsClaim);
+    const valid = !!region && validTerritory && region.biome !== "water" && hasWorker && clear && affordable && hasWaterAccess && frontlineSlotFree;
     this.ghost.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.MeshStandardMaterial)) return;
       object.material.color.set(valid ? "#c8ff45" : "#ff5b49");
@@ -1108,6 +1427,15 @@ export class GameScene {
     if (!this.settings.reducedMotion) {
       for (const object of this.scene.children) {
         if (object.userData.drift) object.rotation.y += delta * 0.01;
+      }
+      for (const trace of this.frontlineTraces.values()) {
+        const material = trace.line.material as THREE.LineDashedMaterial;
+        const pulse = 1 + Math.sin(this.clock.elapsedTime * 6.2 + trace.phase) * 0.18;
+        material.dashSize = 1.15 + Math.sin(this.clock.elapsedTime * 5.1 + trace.phase) * 0.18;
+        material.gapSize = 0.7 + Math.cos(this.clock.elapsedTime * 5.1 + trace.phase) * 0.12;
+        trace.head.scale.setScalar(pulse);
+        trace.ring.scale.setScalar(0.92 + Math.sin(this.clock.elapsedTime * 4.3 + trace.phase) * 0.12);
+        trace.ring.rotation.z += delta * 2.4;
       }
       for (const visual of this.buildingVisuals.values()) {
         visual.group.traverse((object) => {

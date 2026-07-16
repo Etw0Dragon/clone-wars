@@ -2,9 +2,15 @@
 
 Prototype jouable de RTS/tycoon en Three.js. Développez une usine à clones, reliez les extracteurs au stockage avec des convoyeurs, capturez les régions organiques et détruisez le noyau de l’IA.
 
+Le mode **Frontline**, activé par défaut, propose une boucle plus directe inspirée des jeux de conquête territoriale : chaque région possède une garnison et un niveau de défense, les attaques engagent 10, 25, 50 ou 75 % des clones disponibles, et le joueur choisit une doctrine d’invasion, de ruée ou de siège. Les clones restent visibles et se déplacent physiquement entre les secteurs, tandis que l’économie, la croissance des garnisons et les connexions de production sont automatisées. Chaque secteur accepte jusqu’à **3 extracteurs**, un seul **bâtiment militaire** partagé entre tourelle et paroi, et une seule tourelle.
+
+Le mode **Classique** reste accessible depuis la configuration de partie et conserve le prototype industriel original avec ouvriers territoriaux, énergie, convoyeurs, capture par nœuds et embarquement manuel.
+
 Clone War est entièrement statique : aucune base de données ni API n’est requise. Les paramètres et statistiques sont conservés localement dans le navigateur, et la simulation tourne dans un Web Worker.
 
 Les cartes comportent maintenant un canal nutritif généré depuis la seed. L’eau bloque les clones terrestres : capturez une rive, installez une **Pompe osmotique**, acheminez l’eau au stockage, puis construisez un **Port synaptique**. Les esciffes, péniches et barges embarquent une sélection de clones avant de les débarquer sur une autre terre.
+
+Dans Frontline, les ports sont des implants côtiers directement constructibles. Ils autorisent les attaques distantes vers les autres côtes ; les bateaux restent visibles comme des convois de débarquement, sans chargement manuel obligatoire.
 
 Deux ports actifs construits sur des terres séparées ouvrent automatiquement une route maritime. Des navires d’échange parcourent le canal et apportent des matériaux aux deux destinations : les routes longues sont les plus rentables.
 

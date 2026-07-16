@@ -13,6 +13,14 @@ import {
   TICK_SECONDS,
   UNITS,
   VAT_LEVEL_TWO,
+  FRONTLINE_MAX_EXTRACTORS,
+  FRONTLINE_MAX_MILITARY_BUILDINGS,
+  FRONTLINE_MAX_TURRETS,
+  FRONTLINE_MAX_GARRISON,
+  FRONTLINE_NEUTRAL_GARRISON,
+  FRONTLINE_TERRAIN_PROFILES,
+  FRONTLINE_RESOURCE_RATE,
+  FRONTLINE_STARTING_GARRISON,
 } from "./config";
 import { chooseEnemyStart, createMap, findRegionAt, pointInPolygon } from "./map";
 import { findPath } from "./pathfinding";
@@ -24,10 +32,13 @@ import type {
   BoatType,
   CargoPacket,
   FactionId,
+  FrontlineAttack,
+  FrontlineAttackMode,
   GamePhase,
   GameSnapshot,
   MatchStats,
   MatchConfig,
+  MatchMode,
   MapPreset,
   MutationId,
   Notification,
@@ -93,6 +104,7 @@ export class GameSimulation {
   readonly random: SeededRandom;
   readonly mapPreset: MapPreset;
   readonly aiCount: number;
+  readonly mode: MatchMode;
   regions: Region[];
   buildings: Building[] = [];
   units: Unit[] = [];
@@ -100,6 +112,7 @@ export class GameSimulation {
   tradeShips: TradeShip[] = [];
   cargo: CargoPacket[] = [];
   projectiles: Projectile[] = [];
+  frontlineAttacks: FrontlineAttack[] = [];
   resources: Record<FactionId, ResourceStock> = {
     player: { ...PLAYER_STARTING_RESOURCES, energyProduced: 0, energyUsed: 0, research: 0, workers: 0 },
     enemy: { biomass: 90, ore: 95, water: 0, energyProduced: 0, energyUsed: 0, research: 0, workers: 0 },
@@ -131,6 +144,7 @@ export class GameSimulation {
     this.random = new SeededRandom(this.seed);
     this.mapPreset = config.mapPreset;
     this.aiCount = Math.max(1, Math.min(3, Math.round(config.aiCount)));
+    this.mode = config.mode ?? "classic";
     this.regions = createMap(this.seed, this.mapPreset);
     this.notify("info", `CARTE ${this.seed.toString(16).toUpperCase().padStart(8, "0")} SYNTHÉTISÉE`);
   }
@@ -180,6 +194,10 @@ export class GameSimulation {
         return this.repairBuilding(faction, command.buildingId);
       case "sell":
         return this.sellBuilding(faction, command.buildingId);
+      case "launchAttack":
+        return this.launchFrontlineAttack(faction, command.sourceRegionId, command.targetRegionId, command.mode, command.percentage);
+      case "transferGarrison":
+        return this.transferFrontlineGarrison(faction, command.sourceRegionId, command.targetRegionId, command.percentage);
       default:
         return false;
     }
@@ -188,6 +206,10 @@ export class GameSimulation {
   tick(): void {
     if (this.phase !== "playing" || this.paused) return;
     this.tickCount += 1;
+    if (this.mode === "frontline") {
+      this.tickFrontline();
+      return;
+    }
     this.updateConstruction();
     this.updateBuildingUpgrades();
     this.updatePower();
@@ -209,6 +231,259 @@ export class GameSimulation {
     this.checkMutations();
     this.checkVictory();
     this.notifications = this.notifications.filter((entry) => this.tickCount - entry.tick < TICK_RATE * 16);
+  }
+
+  private tickFrontline(): void {
+    this.updateFrontlineEconomy();
+    this.updateFrontlineAttacks();
+    this.updateFrontlineVision();
+    this.updateResearch();
+    if (this.tickCount % (TICK_RATE * 2) === 0) this.runAi();
+    this.checkMutations();
+    this.checkFrontlineVictory();
+    this.notifications = this.notifications.filter((entry) => this.tickCount - entry.tick < TICK_RATE * 16);
+  }
+
+  private updateFrontlineEconomy(): void {
+    for (const faction of FACTIONS) {
+      const owned = this.regions.filter((region) => region.owner === faction);
+      const stock = this.resources[faction];
+      let biomassRate = 0;
+      let oreRate = 0;
+      let waterRate = 0;
+      for (const region of owned) {
+        const buildings = this.buildings.filter((building) => building.faction === faction && building.regionId === region.id && building.hp > 0);
+        const extractor = buildings.some((building) => building.type === "extractor");
+        const port = buildings.some((building) => building.type === "port");
+        const vatCount = buildings.filter((building) => building.type === "vat").length;
+        biomassRate += region.yields.biomass * FRONTLINE_RESOURCE_RATE * (extractor ? 1.45 : 0.72);
+        oreRate += region.yields.ore * FRONTLINE_RESOURCE_RATE * (extractor ? 1.45 : 0.72);
+        if (port && this.isWaterAdjacent(region)) waterRate += 0.48;
+        const cap = Math.min(FRONTLINE_MAX_GARRISON, 180 + vatCount * 120);
+        region.garrison[faction] = Math.min(cap, region.garrison[faction] + (0.52 + vatCount * 0.48) * TICK_SECONDS);
+        const bastionBonus = buildings.some((building) => building.type === "wall" || building.type === "turret") ? 22 : 0;
+        region.defense[faction] = Math.min(100, region.defense[faction] + (0.22 + bastionBonus * 0.012) * TICK_SECONDS);
+      }
+      stock.biomass = Math.min(999, stock.biomass + biomassRate * TICK_SECONDS);
+      stock.ore = Math.min(999, stock.ore + oreRate * TICK_SECONDS);
+      stock.water = Math.min(999, stock.water + waterRate * TICK_SECONDS);
+      stock.research += owned.length * 0.16 * TICK_SECONDS;
+      stock.energyProduced = 0;
+      stock.energyUsed = 0;
+      stock.workers = 0;
+    }
+  }
+
+  private launchFrontlineAttack(
+    faction: FactionId,
+    sourceRegionId: number,
+    targetRegionId: number,
+    mode: FrontlineAttackMode,
+    percentage: 10 | 25 | 50 | 75,
+  ): boolean {
+    if (this.mode !== "frontline" || this.phase !== "playing") return false;
+    const source = this.regions.find((region) => region.id === sourceRegionId);
+    const target = this.regions.find((region) => region.id === targetRegionId);
+    if (!source || !target || source.biome === "water" || target.biome === "water" || source.owner !== faction) return false;
+    const direct = source.neighbors.includes(target.id);
+    const landSeparated = !this.isLandReachable(source.id, target.id);
+    const naval = landSeparated &&
+      this.buildings.some((building) => building.faction === faction && building.type === "port" && building.regionId === source.id) &&
+      this.isWaterAdjacent(target);
+    if (!direct && !naval) {
+      if (faction === "player") this.notify("warning", "FRONTIÈRE INACCESSIBLE — CONSTRUISEZ DEUX PORTS");
+      return false;
+    }
+    if (mode === "defense" && target.owner !== faction) return false;
+    if (mode !== "defense" && target.owner === faction) return false;
+    const totalAvailable = this.frontlineAvailableGarrison(faction);
+    const amount = Math.floor(totalAvailable * (percentage / 100));
+    if (amount < 8 || totalAvailable - amount < 1) {
+      if (faction === "player") this.notify("warning", "GARNISON INSUFFISANTE POUR CET ENGAGEMENT");
+      return false;
+    }
+    this.withdrawFrontlineGarrison(faction, amount, source.id);
+    const operation: FrontlineAttack = {
+      id: this.nextEntityId++, faction, sourceRegionId, targetRegionId, mode,
+      amount, remaining: amount, progress: 0, state: "marching", casualties: 0,
+    };
+    this.frontlineAttacks.push(operation);
+    if (mode === "defense") {
+      target.garrison[faction] = Math.min(FRONTLINE_MAX_GARRISON, target.garrison[faction] + amount);
+      operation.remaining = 0;
+      operation.progress = 1;
+      operation.state = "engaging";
+      this.notify(faction === "player" ? "success" : "info", "RENFORTS EN ROUTE VERS LA FRONTIÈRE");
+      return true;
+    }
+    const visualCount = Math.min(14, Math.max(3, Math.ceil(amount / 28)));
+    const unitType: UnitType = mode === "rush" ? "scout" : mode === "siege" ? "breaker" : "assault";
+    for (let index = 0; index < visualCount; index += 1) {
+      const unit = this.spawnUnit(faction, unitType, {
+        x: source.center.x + this.random.between(-2.5, 2.5),
+        z: source.center.z + this.random.between(-2.5, 2.5),
+      });
+      if (unit) {
+        unit.frontlineOperationId = operation.id;
+        unit.order = { type: "idle" };
+        unit.visible = true;
+      }
+    }
+    if (faction === "player") this.notify("info", `${mode.toUpperCase()} — ${amount} CLONES ENGAGÉS`);
+    return true;
+  }
+
+  private frontlineAvailableGarrison(faction: FactionId): number {
+    return this.regions
+      .filter((region) => region.owner === faction)
+      .reduce((total, region) => total + region.garrison[faction], 0);
+  }
+
+  private withdrawFrontlineGarrison(faction: FactionId, amount: number, preferredRegionId: number): void {
+    const ownedRegions = this.regions
+      .filter((region) => region.owner === faction)
+      .sort((first, second) => (first.id === preferredRegionId ? -1 : second.id === preferredRegionId ? 1 : first.id - second.id));
+    let remaining = amount;
+    for (const region of ownedRegions) {
+      if (remaining <= 0) break;
+      const withdrawn = Math.min(region.garrison[faction], remaining);
+      region.garrison[faction] -= withdrawn;
+      remaining -= withdrawn;
+    }
+  }
+
+  private transferFrontlineGarrison(faction: FactionId, sourceRegionId: number, targetRegionId: number, percentage: 10 | 25 | 50 | 75): boolean {
+    if (this.mode !== "frontline" || sourceRegionId === targetRegionId) return false;
+    const source = this.regions.find((region) => region.id === sourceRegionId);
+    const target = this.regions.find((region) => region.id === targetRegionId);
+    if (!source || !target || source.biome === "water" || target.biome === "water" || source.owner !== faction || target.owner !== faction) return false;
+
+    const landRoute = this.isAlliedLandReachable(source.id, target.id, faction);
+    const portRoute = !landRoute && this.isWaterAdjacent(source) && this.isWaterAdjacent(target) &&
+      this.buildings.some((building) => building.faction === faction && building.type === "port" && building.regionId === source.id);
+    if (!landRoute && !portRoute) {
+      if (faction === "player") this.notify("warning", "TRANSFERT IMPOSSIBLE — AUCUNE VOIE ALLIÉE");
+      return false;
+    }
+
+    const available = source.garrison[faction];
+    const capacity = FRONTLINE_MAX_GARRISON - target.garrison[faction];
+    const amount = Math.min(Math.floor(available * (percentage / 100)), Math.max(0, capacity));
+    if (amount < 1 || available - amount < 1) {
+      if (faction === "player") this.notify("warning", "TRANSFERT IMPOSSIBLE — GARNISON INSUFFISANTE");
+      return false;
+    }
+    source.garrison[faction] -= amount;
+    target.garrison[faction] += amount;
+    if (faction === "player") this.notify("success", `${amount} CLONES RAPATRIÉS VERS ${target.name.toUpperCase()}`);
+    return true;
+  }
+
+  private updateFrontlineAttacks(): void {
+    const retained: FrontlineAttack[] = [];
+    for (const operation of this.frontlineAttacks) {
+      const source = this.regions.find((region) => region.id === operation.sourceRegionId);
+      const target = this.regions.find((region) => region.id === operation.targetRegionId);
+      if (!source || !target || operation.mode === "defense") continue;
+      const operationUnits = this.units.filter((unit) => unit.frontlineOperationId === operation.id);
+      if (operation.state === "marching") {
+        const speed = operation.mode === "rush" ? 0.32 : operation.mode === "siege" ? 0.16 : 0.23;
+        operation.progress = Math.min(1, operation.progress + speed * TICK_SECONDS);
+        for (const unit of operationUnits) {
+          unit.position = {
+            x: source.center.x + (target.center.x - source.center.x) * operation.progress,
+            z: source.center.z + (target.center.z - source.center.z) * operation.progress,
+          };
+          unit.velocity = { x: target.center.x - source.center.x, z: target.center.z - source.center.z };
+        }
+        if (operation.progress < 1) {
+          retained.push(operation);
+          continue;
+        }
+        operation.state = "engaging";
+      }
+
+      const defender = target.owner === "neutral" ? target.neutralStrength : target.garrison[target.owner];
+      const fortification = target.owner === "neutral"
+        ? FRONTLINE_TERRAIN_PROFILES[target.biome].neutralFortification
+        : 1 + target.defense[target.owner] / 100;
+      const attackFactor = operation.mode === "rush" ? 0.82 : operation.mode === "siege" ? 1.08 : 1;
+      const attackDamage = operation.remaining * 0.036 * attackFactor * TICK_SECONDS;
+      const defenseDamage = defender * 0.034 * fortification * TICK_SECONDS;
+      operation.remaining = Math.max(0, operation.remaining - defenseDamage);
+      const nextDefender = Math.max(0, defender - attackDamage);
+      operation.casualties += defenseDamage;
+      if (operation.faction === "player") {
+        this.stats.clonesLost += Math.max(0, Math.floor(defenseDamage));
+        this.stats.enemiesDestroyed += Math.max(0, Math.floor(attackDamage));
+      }
+      if (target.owner === "neutral") target.neutralStrength = nextDefender;
+      else target.garrison[target.owner] = nextDefender;
+      operation.progress = Math.min(1, operation.progress + TICK_SECONDS * 0.12);
+      if (nextDefender <= 0 && operation.remaining > 0) {
+        this.completeFrontlineConquest(operation, target);
+        for (const unit of operationUnits) {
+          unit.frontlineOperationId = undefined;
+          unit.position = { x: target.center.x + this.random.between(-2.5, 2.5), z: target.center.z + this.random.between(-2.5, 2.5) };
+          unit.velocity = { x: 0, z: 0 };
+        }
+        if (operation.faction === "player") this.notify("success", `${target.name.toUpperCase()} — SECTEUR ASSIMILÉ`);
+        continue;
+      }
+      if (operation.remaining <= 0) {
+        this.units = this.units.filter((unit) => unit.frontlineOperationId !== operation.id);
+        if (operation.faction === "player") this.notify("warning", `${target.name.toUpperCase()} — ASSAUT REPoussé`.toUpperCase());
+        continue;
+      }
+      retained.push(operation);
+    }
+    this.frontlineAttacks = retained;
+  }
+
+  private completeFrontlineConquest(operation: FrontlineAttack, target: Region): void {
+    const previousOwner = target.owner;
+    target.owner = operation.faction;
+    target.captureFaction = operation.faction;
+    target.captureProgress = 100;
+    target.garrison[operation.faction] = Math.min(FRONTLINE_MAX_GARRISON, Math.max(12, Math.round(operation.remaining)));
+    target.defense[operation.faction] = operation.mode === "siege" ? 8 : 16;
+    target.neutralStrength = FRONTLINE_TERRAIN_PROFILES[target.biome].neutralGarrison || FRONTLINE_NEUTRAL_GARRISON;
+    const capturedBuildings = this.buildings.filter((building) => building.regionId === target.id && building.faction === previousOwner);
+    for (const building of capturedBuildings) {
+      if (building.type === "core") {
+        building.hp = 0;
+        this.winner = operation.faction;
+      } else if (operation.mode === "siege") {
+        building.faction = operation.faction;
+        building.hp = Math.max(1, building.hp * 0.55);
+        building.active = false;
+        building.powered = false;
+      } else {
+        building.hp = 0;
+      }
+    }
+    this.stats.territoryPeak = Math.max(this.stats.territoryPeak, this.regions.filter((region) => region.owner === "player").length);
+  }
+
+  private updateFrontlineVision(): void {
+    for (const region of this.regions) {
+      region.visible = region.owner === "player" || region.neighbors.some((id) => this.regions.find((candidate) => candidate.id === id)?.owner === "player");
+      region.discovered = region.visible || region.owner === "player";
+    }
+  }
+
+  private checkFrontlineVictory(): void {
+    const land = this.regions.filter((region) => region.biome !== "water").length;
+    const playerTerritory = this.regions.filter((region) => region.owner === "player").length;
+    const enemyTerritory = this.regions.filter((region) => region.owner === "enemy").length;
+    if (playerTerritory / Math.max(1, land) >= 0.7) this.winner = "player";
+    if (enemyTerritory === 0 && this.buildings.some((building) => building.faction === "player" && building.type === "core")) this.winner = "player";
+    const playerCoreRegion = this.buildings.find((building) => building.faction === "player" && building.type === "core")?.regionId;
+    if (playerCoreRegion !== undefined && this.regions.find((region) => region.id === playerCoreRegion)?.owner === "enemy") this.winner = "enemy";
+    if (this.winner) {
+      this.phase = this.winner === "player" ? "victory" : "defeat";
+      this.paused = false;
+    }
   }
 
   private deploy(playerRegionId: number): boolean {
@@ -250,6 +525,19 @@ export class GameSimulation {
     region.captureProgress = 100;
     this.claimAllAnchors(region, faction);
     this.discoveredBy[faction].add(region.id);
+    if (this.mode === "frontline") {
+      region.garrison[faction] = faction === "enemy"
+        ? FRONTLINE_STARTING_GARRISON + 110
+        : FRONTLINE_STARTING_GARRISON;
+      region.defense[faction] = faction === "enemy" ? 34 : 22;
+      const center = this.findFreePoint(region, region.center, 5);
+      this.addBuilding(faction, "core", center, region.id, true);
+      if (faction === "enemy") {
+        this.addBuilding(faction, "wall", this.findFreePoint(region, { x: center.x + 8, z: center.z }, BUILDINGS.wall.size), region.id, true);
+        this.addBuilding(faction, "vat", this.findFreePoint(region, { x: center.x - 7, z: center.z }, BUILDINGS.vat.size), region.id, true);
+      }
+      return;
+    }
     const center = this.findFreePoint(region, region.center, 5);
     const offsets: Array<[BuildingType, number, number]> = [
       ["core", 0, 0],
@@ -270,6 +558,12 @@ export class GameSimulation {
     region.captureProgress = 100;
     this.claimAllAnchors(region, "player");
     this.discoveredBy.player.add(region.id);
+    if (this.mode === "frontline") {
+      region.garrison.player = FRONTLINE_STARTING_GARRISON;
+      region.defense.player = 22;
+      this.addBuilding("player", "core", this.findFreePoint(region, region.center, BUILDINGS.core.size), region.id, true);
+      return;
+    }
     this.addRegionalWorkers(region, "player", 2);
   }
 
@@ -378,6 +672,7 @@ export class GameSimulation {
   private placeBuilding(faction: FactionId, type: BuildingType, rawPosition: Vec2): boolean {
     const definition = BUILDINGS[type];
     if (!definition.buildable) return false;
+    if (this.mode === "frontline") return this.placeFrontlineBuilding(faction, type, rawPosition);
     if (type === "core" && this.buildings.some((building) => building.faction === faction && building.type === "core" && building.hp > 0)) {
       if (faction === "player") this.notify("warning", "NOYAU DÉJÀ ÉTABLI");
       return false;
@@ -416,6 +711,60 @@ export class GameSimulation {
     if (faction === "player") {
       this.stats.buildingsBuilt += 1;
       this.notify(workers >= 4 ? "success" : "info", `${definition.shortName} — ${workers >= 4 ? "CONSTRUIT INSTANTANÉMENT" : "CONSTRUCTION LANCÉE"}`);
+    }
+    return true;
+  }
+
+  private placeFrontlineBuilding(faction: FactionId, type: BuildingType, rawPosition: Vec2): boolean {
+    const definition = BUILDINGS[type];
+    const position = { x: snap(rawPosition.x), z: snap(rawPosition.z) };
+    const region = findRegionAt(this.regions, position);
+    const allowed: BuildingType[] = ["vat", "extractor", "relay", "turret", "wall", "port"];
+    if (!region || region.biome === "water" || region.owner !== faction || !allowed.includes(type)) {
+      if (faction === "player") this.notify("warning", "SECTEUR INCOMPATIBLE POUR CETTE STRUCTURE");
+      return false;
+    }
+    const sectorBuildings = this.buildings.filter((building) => building.faction === faction && building.regionId === region.id && building.type !== "core");
+    const extractors = sectorBuildings.filter((building) => building.type === "extractor").length;
+    const militaryBuildings = sectorBuildings.filter((building) => building.type === "turret" || building.type === "wall").length;
+    const turrets = sectorBuildings.filter((building) => building.type === "turret").length;
+    const uniqueSupport = type === "vat" || type === "relay" || type === "port";
+    if (type === "extractor" && extractors >= FRONTLINE_MAX_EXTRACTORS) {
+      if (faction === "player") this.notify("warning", "MAXIMUM DE 3 EXTRACTEURS ATTEINT");
+      return false;
+    }
+    if (type === "turret" && turrets >= FRONTLINE_MAX_TURRETS) {
+      if (faction === "player") this.notify("warning", "UNE TOURELLE EST DÉJÀ INSTALLÉE DANS CE SECTEUR");
+      return false;
+    }
+    if ((type === "turret" || type === "wall") && militaryBuildings >= FRONTLINE_MAX_MILITARY_BUILDINGS) {
+      if (faction === "player") this.notify("warning", "EMPLACEMENT MILITAIRE DÉJÀ OCCUPÉ");
+      return false;
+    }
+    if (uniqueSupport && sectorBuildings.some((building) => building.type === type)) {
+      if (faction === "player") this.notify("warning", `${definition.shortName} DÉJÀ INSTALLÉ DANS CE SECTEUR`);
+      return false;
+    }
+    if (type === "port" && !this.isWaterAdjacent(region)) {
+      if (faction === "player") this.notify("warning", "LE PORT DOIT TOUCHER UN CANAL");
+      return false;
+    }
+    const cost = { ...definition.cost, water: 0 };
+    if ((cost.biomass ?? 0) > this.resources[faction].biomass ||
+      (cost.ore ?? 0) > this.resources[faction].ore ||
+      (cost.water ?? 0) > this.resources[faction].water) {
+      if (faction === "player") this.notify("warning", "MATIÈRE INSUFFISANTE");
+      return false;
+    }
+    this.spend(faction, cost);
+    const building = this.addBuilding(faction, type, this.findFreePoint(region, position, definition.size), region.id, true);
+    building.active = true;
+    building.powered = true;
+    if (faction === "player") {
+      this.stats.buildingsBuilt += 1;
+      this.notify("success", type === "port"
+        ? "PORT ACTIF — PASSAGES MARITIMES DÉVERROUILLÉS"
+        : `${definition.shortName} — POSITION FRONTLINE CONFIRMÉE`);
     }
     return true;
   }
@@ -547,6 +896,25 @@ export class GameSimulation {
         if (visited.has(neighborId)) continue;
         const neighbor = this.regions.find((candidate) => candidate.id === neighborId);
         if (!neighbor || neighbor.biome === "water") continue;
+        if (neighborId === targetId) return true;
+        visited.add(neighborId);
+        queue.push(neighborId);
+      }
+    }
+    return false;
+  }
+
+  private isAlliedLandReachable(fromId: number, targetId: number, faction: FactionId): boolean {
+    if (fromId === targetId) return true;
+    const visited = new Set<number>([fromId]);
+    const queue = [fromId];
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+      const region = this.regions.find((candidate) => candidate.id === queue[cursor]);
+      if (!region) continue;
+      for (const neighborId of region.neighbors) {
+        if (visited.has(neighborId)) continue;
+        const neighbor = this.regions.find((candidate) => candidate.id === neighborId);
+        if (!neighbor || neighbor.biome === "water" || neighbor.owner !== faction) continue;
         if (neighborId === targetId) return true;
         visited.add(neighborId);
         queue.push(neighborId);
@@ -1498,7 +1866,9 @@ export class GameSimulation {
     for (const faction of FACTIONS) {
       const level = this.mutationLevel[faction];
       const threshold = MUTATION_THRESHOLDS[level];
-      const hasMutationVat = this.buildings.some((building) => building.faction === faction && building.type === "vat" && building.active && building.level >= 2);
+      const hasMutationVat = this.mode === "frontline"
+        ? this.regions.some((region) => region.owner === faction)
+        : this.buildings.some((building) => building.faction === faction && building.type === "vat" && building.active && building.level >= 2);
       if (!hasMutationVat) continue;
       if (threshold === undefined || this.resources[faction].research < threshold) continue;
       const eligible = (Object.keys(MUTATIONS) as MutationId[]).filter((id) => !this.mutations[faction].includes(id));
@@ -1522,6 +1892,10 @@ export class GameSimulation {
 
   private runAi(): void {
     if (this.phase !== "playing") return;
+    if (this.mode === "frontline") {
+      this.runFrontlineAi();
+      return;
+    }
     const faction: FactionId = "enemy";
     const ownBuildings = this.buildings.filter((building) => building.faction === faction);
     const ownUnits = this.units.filter((unit) => unit.faction === faction);
@@ -1589,6 +1963,30 @@ export class GameSimulation {
         unitIds: members.map((unit) => unit.id),
         order: { type: "attackMove", target: { ...target } },
       });
+    }
+  }
+
+  private runFrontlineAi(): void {
+    const enemyRegions = this.regions.filter((region) => region.owner === "enemy");
+    for (const region of enemyRegions) {
+      const buildings = this.buildings.filter((building) => building.faction === "enemy" && building.regionId === region.id && building.type !== "core");
+      if (buildings.length === 0) {
+        const type: BuildingType = region.defense.enemy < 30 ? "wall" : region.yields.biomass > region.yields.ore ? "vat" : "extractor";
+        this.applyCommand("enemy", { type: "placeBuilding", buildingType: type, position: region.center });
+      }
+      const targets = region.neighbors
+        .map((id) => this.regions.find((candidate) => candidate.id === id))
+        .filter((candidate): candidate is Region => !!candidate && candidate.biome !== "water" && candidate.owner !== "enemy");
+      if (targets.length === 0 || region.garrison.enemy < 90) continue;
+      targets.sort((first, second) => {
+        const firstScore = first.owner === "player" ? 1000 : first.yields.biomass + first.yields.ore;
+        const secondScore = second.owner === "player" ? 1000 : second.yields.biomass + second.yields.ore;
+        return secondScore - firstScore;
+      });
+      const target = targets[0]!;
+      if (this.frontlineAttacks.some((attack) => attack.faction === "enemy" && attack.sourceRegionId === region.id)) continue;
+      const mode: FrontlineAttackMode = target.owner === "player" && this.elapsedSeconds > 70 ? "siege" : "invasion";
+      this.launchFrontlineAttack("enemy", region.id, target.id, mode, target.owner === "player" ? 50 : 25);
     }
   }
 
@@ -1695,6 +2093,7 @@ export class GameSimulation {
       seed: this.seed,
       mapPreset: this.mapPreset,
       aiCount: this.aiCount,
+      mode: this.mode,
       tick: this.tickCount,
       elapsedSeconds: this.elapsedSeconds,
       phase: this.phase,
@@ -1707,6 +2106,7 @@ export class GameSimulation {
       tradeShips: visibleTradeShips,
       cargo: visibleCargo,
       projectiles: visibleProjectiles,
+      frontlineAttacks: this.frontlineAttacks.map((attack) => ({ ...attack })),
       resources: {
         player: { ...this.resources.player },
         enemy: { ...this.resources.enemy },

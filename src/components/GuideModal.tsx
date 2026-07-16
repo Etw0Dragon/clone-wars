@@ -29,20 +29,20 @@ function StartTab() {
     <div className="guide-content">
       <SectionHeading
         eyebrow="PROTOCOLE DE SURVIE"
-        title="Votre mission est simple. Votre base ne l’est pas."
-        text="Vous affrontez une IA sur une carte composée de régions aux rendements différents. Développez votre réseau, fabriquez des clones, capturez le terrain puis détruisez le noyau rouge."
+        title="Votre mission est simple. Votre front ne l’est pas."
+        text="Le mode Frontline transforme la carte en réseau de secteurs. Développez vos tissus, engagez une partie de vos garnisons, ouvrez plusieurs fronts puis réduisez le noyau rouge ou contrôlez 70 % du territoire."
       />
       <div className="guide-callout">
         <span className="guide-callout-code">OBJECTIF // 01</span>
-        <strong>RÉDUIRE LE NOYAU ADVERSE À 0 PV</strong>
-        <p>Le noyau est protégé pendant les 75 premières secondes. Profitez de ce délai pour installer vos extracteurs et préparer votre première escouade.</p>
+        <strong>CONTRÔLER LE FRONT OU LE NOYAU</strong>
+        <p>Le noyau reste protégé pendant les 75 premières secondes. Profitez de ce délai pour renforcer votre garnison, poser un implant et choisir votre premier secteur cible.</p>
       </div>
       <div className="guide-steps">
         <article><span>01</span><div><h3>Choisir un tissu</h3><p>Cliquez une région cerclée sur la carte. La forêt produit beaucoup de biomasse, la carrière beaucoup de minerai, la faille beaucoup d’énergie. Une plaine est équilibrée.</p></div></article>
-        <article><span>02</span><div><h3>Déployer l'équipe</h3><p>Validez en bas à droite. Vous recevez deux ouvriers affectés au premier territoire : aucun bâtiment n'est préinstallé.</p></div></article>
-        <article><span>03</span><div><h3>Ériger la colonie</h3><p>Placez d'abord le noyau <kbd>N</kbd>, puis un extracteur symbiotique <kbd>B</kbd> et un stockage. Le même extracteur récolte biomasse et minerai ; reliez-le avec des convoyeurs <kbd>C</kbd>.</p></div></article>
-        <article><span>04</span><div><h3>Multiplier la force</h3><p>La Cuve ADN produit les clones au niveau 1. Son niveau 2 accélère la gestation et ouvre les mutations ADN.</p></div></article>
-        <article><span>05</span><div><h3>Prendre l’initiative</h3><p>Chaque terre possède trois nœuds organiques. Prenez-en deux avec une escouade, puis posez un Relais territorial avec un ouvrier pour stabiliser définitivement la région.</p></div></article>
+        <article><span>02</span><div><h3>Lire la garnison</h3><p>Cliquez un secteur pour voir ses clones, sa défense et son emplacement biomécanique. Une région alliée peut lancer une attaque vers ses frontières.</p></div></article>
+        <article><span>03</span><div><h3>Choisir une doctrine</h3><p>Invasion pour l’équilibre, Ruée pour capturer vite, Siège pour faire tomber les bâtiments. Engagez 10, 25, 50 ou 75 % de la garnison.</p></div></article>
+        <article><span>04</span><div><h3>Implanter le territoire</h3><p>Chaque secteur possède un seul emplacement. Une Cuve ADN augmente la croissance, une Tourelle ou une Paroi renforce la défense, un Extracteur augmente les revenus.</p></div></article>
+        <article><span>05</span><div><h3>Prendre l’initiative</h3><p>Les ports côtiers ouvrent des fronts distants. Les mutations ADN apparaissent pendant la partie et changent les règles de votre colonie.</p></div></article>
       </div>
       <div className="guide-tip"><b>CONSEIL DE DÉPART</b><span>Ne construisez pas toute la base d’un coup. Une seule ligne biomasse → stockage → cuve qui fonctionne vaut mieux que dix bâtiments hors tension.</span></div>
     </div>
@@ -57,14 +57,14 @@ function EconomyTab() {
       <SectionHeading
         eyebrow="INFRASTRUCTURE // 02"
         title="Une base est un circuit, pas une collection de bâtiments."
-        text="Les ressources de départ sont limitées. Les extracteurs fabriquent des capsules, les convoyeurs les livrent et le réseau d’énergie décide quelles machines restent actives."
+        text="En Frontline, les territoires produisent automatiquement. Les choix importants sont le biome, l’implant construit et la part de garnison que vous exposez sur chaque front."
       />
       <div className="guide-resource-grid">
         <article><span className="guide-resource-symbol symbol-bio">B</span><div><h3>BIOMASSE</h3><p>Produit les clones et les structures biologiques. Le noyau en fournit lentement, mais les régions forestières sont bien plus efficaces.</p></div></article>
         <article><span className="guide-resource-symbol symbol-ore">M</span><div><h3>MINERAI</h3><p>Construit convoyeurs, défenses et blindages. Les carrières ferriques sont les meilleures sources.</p></div></article>
         <article><span className="guide-resource-symbol symbol-water">A</span><div><h3>EAU</h3><p>Pompez-la depuis une terre qui borde un canal. Elle alimente les ports, les échanges et les transports amphibies.</p></div></article>
-        <article><span className="guide-resource-symbol symbol-energy">E</span><div><h3>ÉNERGIE</h3><p>Le générateur alimente les bâtiments proches du réseau. Un bâtiment hors réseau ou en déficit cesse de produire.</p></div></article>
-        <article><span className="guide-resource-symbol symbol-bio">O</span><div><h3>OUVRIERS</h3><p>Ils vivent dans les territoires, pas sur le terrain. Un ouvrier autorise la construction, deux l’accélèrent, et quatre rendent les chantiers instantanés.</p></div></article>
+        <article><span className="guide-resource-symbol symbol-energy">D</span><div><h3>DÉFENSE</h3><p>Chaque garnison possède un pourcentage de défense. Les Bastions calcifiés, tourelles et défenses territoriales ralentissent les offensives.</p></div></article>
+        <article><span className="guide-resource-symbol symbol-bio">G</span><div><h3>GARNISON</h3><p>Les clones grandissent automatiquement dans les secteurs possédés. Engager une garnison accélère la conquête mais fragilise immédiatement son territoire d’origine.</p></div></article>
       </div>
       <div className="guide-subheading"><span>RENDEMENTS DES RÉGIONS</span><small>BASE 1.00×</small></div>
       <div className="guide-biome-grid">
@@ -131,12 +131,12 @@ function ControlsTab() {
         text="Le prototype est pensé pour une souris et un clavier. Toutes les commandes importantes sont aussi visibles dans le bandeau inférieur pendant la partie."
       />
       <div className="guide-controls-grid">
-        <div><kbd>CLIC GAUCHE</kbd><strong>Sélectionner</strong><span>Structure, clone ou région de départ.</span></div>
-        <div><kbd>GLISSER</kbd><strong>Sélection de groupe</strong><span>Encadrez plusieurs clones. Maj ajoute à la sélection.</span></div>
-        <div><kbd>CLIC DROIT</kbd><strong>Déplacer</strong><span>Donne un ordre de déplacement à la sélection.</span></div>
-        <div><kbd>COQUE + CLONES</kbd><strong>Embarquer</strong><span>Sélectionnez une coque, puis vos clones, et embarquez-les depuis le panneau.</span></div>
-        <div><kbd>COQUE + DROIT</kbd><strong>Débarquer</strong><span>Avec des passagers à bord, cliquez une terre pour traverser puis débarquer.</span></div>
-        <div><kbd>MAJ + DROIT</kbd><strong>Attaque-mouvement</strong><span>Avance jusqu’au point et engage les ennemis rencontrés.</span></div>
+        <div><kbd>CLIC GAUCHE</kbd><strong>Lire un secteur</strong><span>Ouvre sa garnison, sa défense, ses implants et ses fronts accessibles.</span></div>
+        <div><kbd>10 / 25 / 50 / 75%</kbd><strong>Engager</strong><span>Choisit la part de garnison envoyée depuis le secteur sélectionné.</span></div>
+        <div><kbd>INVASION / RUÉE / SIÈGE</kbd><strong>Doctrine</strong><span>Équilibre, vitesse de capture ou destruction des bâtiments.</span></div>
+        <div><kbd>CLIC SUR UNE CÔTE</kbd><strong>Porter le front</strong><span>Un port autorise les offensives vers les autres territoires côtiers.</span></div>
+        <div><kbd>CLIC + CONSTRUCTION</kbd><strong>Implanter</strong><span>Pose un bâtiment sur l’unique emplacement du secteur sélectionné.</span></div>
+        <div><kbd>CLIC DROIT</kbd><strong>Commande classique</strong><span>Dans le ruleset Classique, conserve le déplacement et l’attaque-mouvement des escouades.</span></div>
         <div><kbd>W A S D</kbd><strong>Caméra</strong><span>Déplace la vue tactique. Les flèches fonctionnent aussi.</span></div>
         <div><kbd>MOLETTE</kbd><strong>Zoom</strong><span>Prend de la hauteur pour lire la carte ou se rapprocher d’une base.</span></div>
         <div><kbd>Q / E</kbd><strong>Rotation</strong><span>Tourne la vue isométrique par quart de tour.</span></div>

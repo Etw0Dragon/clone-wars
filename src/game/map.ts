@@ -1,4 +1,4 @@
-import { BIOMES, MAP_HALF_SIZE } from "./config";
+import { BIOMES, FRONTLINE_TERRAIN_PROFILES, MAP_HALF_SIZE } from "./config";
 import { SeededRandom } from "./random";
 import type { BiomeId, MapPreset, Region, RegionAnchor, Vec2 } from "./types";
 
@@ -198,6 +198,9 @@ export function createMap(seed: number, preset: MapPreset = "standard"): Region[
       visible: false,
       startCandidate: biome !== "water" && distanceFromCenter >= 14,
       elevation: biome === "water" ? 0 : Math.round((0.35 + random.between(0, 1.35) + Math.max(0, 1 - distanceFromCenter / MAP_HALF_SIZE) * 0.35) * 10) / 10,
+      garrison: { player: 0, enemy: 0 },
+      defense: { player: 0, enemy: 0 },
+      neutralStrength: FRONTLINE_TERRAIN_PROFILES[biome].neutralGarrison,
     };
   });
 

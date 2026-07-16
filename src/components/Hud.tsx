@@ -4,6 +4,7 @@ import { gameSession, type SessionState } from "../game/session";
 import { loadSettings } from "../game/persistence";
 import type { Boat, BoatType, BuildingType, GameSnapshot, UnitType } from "../game/types";
 import { MiniMap } from "./MiniMap";
+import { FrontlineHud } from "./FrontlineHud";
 
 interface HudProps {
   state: SessionState;
@@ -233,10 +234,14 @@ function SelectionPanel({ state, snapshot, bindings }: HudProps & { bindings: Re
 }
 
 export function Hud({ state, snapshot }: HudProps) {
+  if (snapshot.mode === "frontline") return <FrontlineHud state={state} snapshot={snapshot} />;
   const settings = useMemo(() => loadSettings(), []);
   const bindings = settings.keybindings;
   const stock = snapshot.resources.player;
   const totalWorkers = stock.workers + snapshot.regions.reduce((sum, region) => sum + region.workers.player, 0);
+  const totalClones = snapshot.units.filter((unit) => unit.faction === "player").length + stock.workers + snapshot.buildings
+    .filter((building) => building.faction === "player" && building.type === "vat")
+    .reduce((sum, building) => sum + building.queue.length, 0);
   const owned = snapshot.regions.filter((region) => region.owner === "player").length;
   const researchLevel = snapshot.mutations.player.length;
   const nextResearch = MUTATION_THRESHOLDS[researchLevel] ?? MUTATION_THRESHOLDS.at(-1)!;
@@ -255,6 +260,7 @@ export function Hud({ state, snapshot }: HudProps) {
           <ResourceReadout code="BIO" value={stock.biomass} />
           <ResourceReadout code="MIN" value={stock.ore} />
           <ResourceReadout code="EAU" value={stock.water} />
+          <ResourceReadout code="CLN" value={totalClones} />
           <ResourceReadout code="OUV" value={totalWorkers} rate={`R${stock.workers}`} />
           <ResourceReadout code="NRJ" value={stock.energyProduced - stock.energyUsed} rate={`${Math.ceil(stock.energyUsed)}/${Math.floor(stock.energyProduced)}`} />
           <div className="research-readout"><span>ADN</span><div><i style={{ width: `${Math.min(100, stock.research / nextResearch * 100)}%` }} /></div><b>{Math.floor(stock.research)}/{nextResearch}</b></div>

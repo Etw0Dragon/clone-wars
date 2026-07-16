@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TICK_RATE, UNITS, VAT_LEVEL_TWO } from "./config";
+import { FRONTLINE_TERRAIN_PROFILES, TICK_RATE, UNITS, VAT_LEVEL_TWO } from "./config";
 import { GameSimulation } from "./simulation";
 import type { Boat, Building, GameSnapshot, Region } from "./types";
 
@@ -309,5 +309,93 @@ describe("GameSimulation", () => {
     expect(simulation.units.filter((unit) => unit.faction === "enemy").length).toBeGreaterThanOrEqual(4);
     expect(simulation.buildings.filter((building) => building.faction === "enemy").length).toBeGreaterThan(4);
     expect(simulation.regions.filter((region) => region.owner === "enemy").length).toBeGreaterThan(1);
+  });
+
+  it("runs the Frontline ruleset with territorial garrisons and doctrine attacks", () => {
+    const simulation = new GameSimulation(0xfaceb00c, { mapPreset: "compact", aiCount: 1, mode: "frontline" });
+    const start = simulation.regions.find((region) => region.startCandidate)!;
+    expect(simulation.applyPlayerCommand({ type: "deploy", regionId: start.id })).toBe(true);
+    expect(simulation.getSnapshot().mode).toBe("frontline");
+    expect(start.garrison.player).toBeGreaterThan(300);
+    const target = simulation.regions.find((region) => region.biome !== "water" && region.owner === "neutral" && start.neighbors.includes(region.id))!;
+    target.neutralStrength = 12;
+    expect(simulation.applyPlayerCommand({
+      type: "launchAttack", sourceRegionId: start.id, targetRegionId: target.id, mode: "rush", percentage: 50,
+    })).toBe(true);
+    for (let index = 0; index < TICK_RATE * 20 && target.owner !== "player"; index += 1) simulation.tick();
+    expect(target.owner).toBe("player");
+    expect(simulation.frontlineAttacks.filter((attack) => attack.faction === "player")).toHaveLength(0);
+    expect(simulation.units.some((unit) => unit.faction === "player" && unit.frontlineOperationId === undefined)).toBe(true);
+  });
+
+  it("calculates an offensive percentage from the whole allied garrison pool", () => {
+    const simulation = new GameSimulation(0x2468ace0, { mapPreset: "standard", aiCount: 1, mode: "frontline" });
+    const start = simulation.regions.find((region) => region.startCandidate)!;
+    expect(simulation.applyPlayerCommand({ type: "deploy", regionId: start.id })).toBe(true);
+    const extraTerritory = simulation.regions.find((region) => region.biome !== "water" && region.id !== start.id && region.owner === "neutral")!;
+    extraTerritory.owner = "player";
+    extraTerritory.garrison.player = 200;
+    const target = simulation.regions.find((region) => region.biome !== "water" && region.owner === "neutral" && start.neighbors.includes(region.id))!;
+    const expectedAmount = Math.floor((start.garrison.player + extraTerritory.garrison.player) * 0.25);
+    expect(simulation.applyPlayerCommand({
+      type: "launchAttack", sourceRegionId: start.id, targetRegionId: target.id, mode: "invasion", percentage: 25,
+    })).toBe(true);
+    expect(simulation.frontlineAttacks.at(-1)?.amount).toBe(expectedAmount);
+  });
+
+  it("varies neutral garrisons and fortification by biome", () => {
+    const simulation = new GameSimulation(0x10203040, { mapPreset: "compact", aiCount: 1, mode: "frontline" });
+    const plains = simulation.regions.find((region) => region.biome === "plains")!;
+    const quarry = simulation.regions.find((region) => region.biome === "quarry")!;
+    expect(plains.neutralStrength).toBe(FRONTLINE_TERRAIN_PROFILES.plains.neutralGarrison);
+    expect(quarry.neutralStrength).toBe(FRONTLINE_TERRAIN_PROFILES.quarry.neutralGarrison);
+    expect(quarry.neutralStrength).toBeGreaterThan(plains.neutralStrength);
+    expect(FRONTLINE_TERRAIN_PROFILES.quarry.neutralFortification).toBeGreaterThan(FRONTLINE_TERRAIN_PROFILES.plains.neutralFortification);
+  });
+
+  it("transfers a percentage of a connected allied garrison", () => {
+    const simulation = new GameSimulation(0x55667788, { mapPreset: "compact", aiCount: 1, mode: "frontline" });
+    const startId = deploy(simulation);
+    const start = simulation.regions.find((region) => region.id === startId)!;
+    const target = simulation.regions.find((region) => region.biome !== "water" && start.neighbors.includes(region.id) && region.owner === "neutral")!;
+    target.owner = "player";
+    target.garrison.player = 40;
+    start.garrison.player = 200;
+    expect(simulation.applyPlayerCommand({
+      type: "transferGarrison", sourceRegionId: start.id, targetRegionId: target.id, percentage: 25,
+    })).toBe(true);
+    expect(start.garrison.player).toBe(150);
+    expect(target.garrison.player).toBe(90);
+  });
+
+  it("uses Frontline category capacities for ports, military implants and extractors", () => {
+    const simulation = new GameSimulation(0xdecafbad, { mapPreset: "standard", aiCount: 1, mode: "frontline" });
+    const shore = simulation.regions.find((region) => region.startCandidate && region.neighbors.some((id) => simulation.regions.find((candidate) => candidate.id === id)?.biome === "water"))!;
+    expect(simulation.applyPlayerCommand({ type: "deploy", regionId: shore.id })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "port", position: shore.center })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "turret", position: shore.center })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "turret", position: shore.center })).toBe(false);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "wall", position: shore.center })).toBe(false);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "extractor", position: shore.center })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "extractor", position: shore.center })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "extractor", position: shore.center })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "extractor", position: shore.center })).toBe(false);
+    expect(simulation.buildings.filter((building) => building.faction === "player" && building.regionId === shore.id && building.type !== "core")).toHaveLength(5);
+  });
+
+  it("opens distant water-separated targets as soon as a Frontline port is placed", () => {
+    const simulation = new GameSimulation(0x13579bdf, { mapPreset: "frontier", aiCount: 1, mode: "frontline" });
+    const shore = simulation.regions.find((region) => region.startCandidate && region.neighbors.some((id) => simulation.regions.find((candidate) => candidate.id === id)?.biome === "water"))!;
+    expect(simulation.applyPlayerCommand({ type: "deploy", regionId: shore.id })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "port", position: shore.center })).toBe(true);
+    const distantCoast = simulation.regions.find((region) =>
+      region.biome !== "water" && region.owner === "neutral" && region.id !== shore.id &&
+      region.neighbors.some((id) => simulation.regions.find((candidate) => candidate.id === id)?.biome === "water") &&
+      !landReachable(simulation.regions, shore.id, region.id),
+    );
+    expect(distantCoast).toBeDefined();
+    expect(simulation.applyPlayerCommand({
+      type: "launchAttack", sourceRegionId: shore.id, targetRegionId: distantCoast!.id, mode: "invasion", percentage: 10,
+    })).toBe(true);
   });
 });

@@ -25,7 +25,8 @@ export function MatchSetupModal({ config, onApply, onClose }: MatchSetupModalPro
           <section className="settings-section">
             <div className="settings-heading"><span>01</span><h3>MODE</h3></div>
             <div className="mode-options">
-              <button type="button" className="mode-option is-selected"><strong>SOLO</strong><small>Vous contre les colonies rivales.</small></button>
+              <button type="button" className={`mode-option ${config.mode !== "classic" ? "is-selected" : ""}`} onClick={() => update("mode", "frontline")}><strong>FRONTLINE</strong><small>Conquête par garnisons, fronts et doctrines.</small></button>
+              <button type="button" className={`mode-option ${config.mode === "classic" ? "is-selected" : ""}`} onClick={() => update("mode", "classic")}><strong>CLASSIQUE</strong><small>Prototype industriel avec microgestion complète.</small></button>
               <button type="button" className="mode-option is-locked" disabled><strong>MULTI</strong><small>PROCHAINE PHASE DE DÉVELOPPEMENT</small></button>
             </div>
           </section>
@@ -37,13 +38,13 @@ export function MatchSetupModal({ config, onApply, onClose }: MatchSetupModalPro
           </section>
           <section className="settings-section match-section">
             <div className="settings-heading"><span>03</span><h3>COLONIES IA</h3></div>
-            <p className="settings-hint">Chaque IA commence avec son noyau et étend son territoire. Les comportements avancés arriveront dans une prochaine itération.</p>
+            <p className="settings-hint">En Frontline, chaque IA engage des garnisons automatiquement et choisit ses propres fronts.</p>
             <div className="quality-options ai-options">
               {[1, 2, 3].map((count) => <button type="button" key={count} className={`quality-option ${config.aiCount === count ? "is-selected" : ""}`} onClick={() => update("aiCount", count)}><strong>{count} IA</strong><small>{count === 1 ? "Duel tactique" : count === 2 ? "Pression double" : "Front chaotique"}</small></button>)}
             </div>
           </section>
         </div>
-        <footer className="settings-footer"><span className="match-summary">SOLO · {MAPS.find((map) => map.id === config.mapPreset)?.sectors} · {config.aiCount} IA</span><button type="button" className="launch-button settings-done" onClick={onClose}><span>VALIDER LA CONFIGURATION</span><b>↗</b></button></footer>
+        <footer className="settings-footer"><span className="match-summary">{(config.mode ?? "classic").toUpperCase()} · {MAPS.find((map) => map.id === config.mapPreset)?.sectors} · {config.aiCount} IA</span><button type="button" className="launch-button settings-done" onClick={onClose}><span>VALIDER LA CONFIGURATION</span><b>↗</b></button></footer>
       </section>
     </div>
   );

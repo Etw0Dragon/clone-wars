@@ -33,7 +33,7 @@ export function Landing() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
-  const [matchConfig, setMatchConfig] = useState<MatchConfig>({ mapPreset: "standard", aiCount: 1 });
+  const [matchConfig, setMatchConfig] = useState<MatchConfig>({ mode: "frontline", mapPreset: "compact", aiCount: 1 });
   const career = useMemo(() => loadCareerStats(), []);
 
   const regenerate = () => setSeed(randomSeed().toString(16).toUpperCase().padStart(8, "0"));
@@ -82,7 +82,7 @@ export function Landing() {
         </div>
 
         <aside className="launch-panel">
-          <div className="panel-ruler"><span>EXPÉRIENCE</span><span>SOLO // {matchConfig.aiCount} IA</span></div>
+            <div className="panel-ruler"><span>FRONTLINE // EXPÉRIENCE</span><span>SOLO // {matchConfig.aiCount} IA</span></div>
           <label htmlFor="seed">SIGNATURE DE CARTE</label>
           <div className="seed-control">
             <span>0x</span>
@@ -103,7 +103,7 @@ export function Landing() {
           <div className="launch-meta">
             <span>1 JOUEUR / {matchConfig.aiCount} IA</span>
             <span>≈ 15–20 MIN</span>
-            <span>{matchConfig.mapPreset.toUpperCase()} // SEED</span>
+            <span>{(matchConfig.mode ?? "classic").toUpperCase()} // {matchConfig.mapPreset.toUpperCase()}</span>
           </div>
           <button type="button" className="launch-guide-button match-config-button" onClick={() => setSetupOpen(true)}><span>⌘</span> CONFIGURER SOLO, IA &amp; CARTE <b>↗</b></button>
           <button type="button" className="launch-guide-button" onClick={() => setGuideOpen(true)}>
