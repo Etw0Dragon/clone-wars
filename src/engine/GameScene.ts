@@ -34,9 +34,15 @@ interface BoatVisual {
   boat: Boat;
 }
 
+interface SquadBlobVisual {
+  group: THREE.Group;
+  faction: FactionId;
+  count: number;
+}
+
 const BUILD_SHORTCUTS: Partial<Record<string, BuildingType>> = {
-  n: "core", g: "generator", x: "storage", v: "vat", b: "bioExtractor", o: "oreExtractor",
-  c: "conveyor", r: "relay", t: "turret", l: "lab", f: "wall", u: "waterExtractor", j: "port",
+  n: "core", g: "generator", x: "storage", v: "vat", b: "extractor",
+  c: "conveyor", r: "relay", t: "turret", f: "wall", u: "waterExtractor", j: "port",
 };
 
 const UNIT_GEOMETRIES: Record<UnitType, () => THREE.BufferGeometry> = {
@@ -134,7 +140,7 @@ function makeBuildingModel(building: Building): THREE.Group {
       break;
     }
     case "vat": {
-      // Cloning: a row of transparent gestation pods, not a generic tank.
+      // A single organ grows from clone vat into an active mutation chamber.
       addMesh(group, new THREE.BoxGeometry(4.15, 0.48, 2.55), shell, [0, 0.24, 0]);
       const glass = new THREE.MeshStandardMaterial({
         color: FACTION_COLORS[building.faction], transparent: true, opacity: 0.48,
@@ -147,33 +153,31 @@ function makeBuildingModel(building: Building): THREE.Group {
       }
       const manifold = addMesh(group, new THREE.CylinderGeometry(0.14, 0.14, 3.4, 6), team, [0, 2.75, 0]);
       manifold.rotation.z = Math.PI / 2;
-      break;
-    }
-    case "bioExtractor": {
-      // Biomass: a low greenhouse with three swollen cultivation sacs.
-      addMesh(group, new THREE.CylinderGeometry(1.75, 2, 0.45, 8), shell, [0, 0.23, 0]);
-      for (let index = 0; index < 3; index += 1) {
-        const angle = (index / 3) * Math.PI * 2 + Math.PI / 6;
-        addMesh(group, new THREE.SphereGeometry(0.82, 8, 6), team, [Math.cos(angle) * 0.88, 1.02, Math.sin(angle) * 0.88]);
-        const stalk = addMesh(group, new THREE.CylinderGeometry(0.13, 0.2, 1.45, 5), bone, [Math.cos(angle) * 1.2, 0.72, Math.sin(angle) * 1.2]);
-        stalk.rotation.z = Math.cos(angle) * 0.32;
+      if (building.level >= 2) {
+        const halo = addMesh(group, new THREE.TorusKnotGeometry(0.92, 0.09, 46, 7, 2, 3), team, [0, 3.28, 0]);
+        halo.userData.spin = 0.62;
+        for (const x of [-1.7, 1.7]) {
+          addMesh(group, new THREE.CylinderGeometry(0.12, 0.16, 2.1, 5), bone, [x, 1.42, 0]);
+          addMesh(group, new THREE.SphereGeometry(0.28, 7, 6), team, [x, 2.57, 0]);
+        }
       }
-      addMesh(group, new THREE.TorusGeometry(1.25, 0.13, 6, 18), bone, [0, 0.75, 0]).rotation.x = Math.PI / 2;
       break;
     }
-    case "oreExtractor": {
-      // Ore: a spindly derrick and a long, vertical mining drill.
-      addMesh(group, new THREE.BoxGeometry(2.8, 0.42, 2.8), shell, [0, 0.21, 0]);
-      for (const [x, z] of [[-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1]] as const) {
-        const leg = addMesh(group, new THREE.CylinderGeometry(0.1, 0.17, 3.1, 5), bone, [x, 1.6, z]);
+    case "extractor": {
+      // One hybrid organ alternates fungal harvest and deep mineral drilling.
+      addMesh(group, new THREE.CylinderGeometry(1.9, 2.15, 0.46, 8), shell, [0, 0.23, 0]);
+      for (const [x, z] of [[-1.15, -1.05], [1.15, -1.05], [-1.15, 1.05], [1.15, 1.05]] as const) {
+        const leg = addMesh(group, new THREE.CylinderGeometry(0.1, 0.17, 2.75, 5), bone, [x, 1.42, z]);
         leg.rotation.z = x * -0.12;
       }
-      addMesh(group, new THREE.CylinderGeometry(0.34, 0.44, 3.9, 7), darkMaterial("#1a1d1a"), [0, 2.05, 0]);
-      const drill = addMesh(group, new THREE.ConeGeometry(0.54, 1.45, 7), team, [0, 0.04, 0]);
+      for (const angle of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+        addMesh(group, new THREE.SphereGeometry(0.58, 8, 6), team, [Math.cos(angle) * 1.02, 1.02, Math.sin(angle) * 1.02]);
+      }
+      addMesh(group, new THREE.CylinderGeometry(0.31, 0.42, 3.45, 7), darkMaterial("#1a1d1a"), [0, 1.78, 0]);
+      const drill = addMesh(group, new THREE.ConeGeometry(0.52, 1.35, 7), team, [0, 0.02, 0]);
       drill.rotation.x = Math.PI;
-      drill.userData.spin = 1.6;
-      const crown = addMesh(group, new THREE.ConeGeometry(1.35, 0.55, 4), team, [0, 4.18, 0]);
-      crown.rotation.y = Math.PI / 4;
+      drill.userData.spin = 1.4;
+      addMesh(group, new THREE.TorusGeometry(1.3, 0.12, 6, 18), bone, [0, 1.06, 0]).rotation.x = Math.PI / 2;
       break;
     }
     case "conveyor": {
@@ -211,20 +215,6 @@ function makeBuildingModel(building: Building): THREE.Group {
         barrel.rotation.x = Math.PI / 2 - 0.13;
       }
       addMesh(group, new THREE.TorusGeometry(1.2, 0.09, 6, 16), team, [0, 0.92, 0]).rotation.x = Math.PI / 2;
-      break;
-    }
-    case "lab": {
-      // Research: a glass dome encircled by a raised DNA-like apparatus.
-      addMesh(group, new THREE.CylinderGeometry(2, 2.25, 0.45, 8), shell, [0, 0.23, 0]);
-      const dome = new THREE.MeshStandardMaterial({ color: "#dbe8ba", transparent: true, opacity: 0.34, emissive: FACTION_COLORS[building.faction], emissiveIntensity: 0.22, roughness: 0.08 });
-      addMesh(group, new THREE.SphereGeometry(1.45, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2), dome, [0, 0.46, 0]);
-      for (let index = 0; index < 6; index += 1) {
-        const angle = (index / 6) * Math.PI * 2;
-        addMesh(group, new THREE.SphereGeometry(0.22, 6, 5), index % 2 === 0 ? team : bone, [Math.cos(angle) * 1.58, 1.15 + (index % 2) * 0.58, Math.sin(angle) * 1.58]);
-      }
-      const helix = addMesh(group, new THREE.TorusKnotGeometry(0.7, 0.09, 40, 6, 2, 3), team, [0, 2.22, 0]);
-      helix.scale.setScalar(0.95);
-      helix.userData.spin = 0.28;
       break;
     }
     case "wall": {
@@ -305,6 +295,8 @@ export class GameScene {
   private readonly projectileGroup = new THREE.Group();
   private readonly selectionGroup = new THREE.Group();
   private readonly squadMarkerGroup = new THREE.Group();
+  private readonly anchorGroup = new THREE.Group();
+  private readonly squadBlobGroup = new THREE.Group();
   private readonly ground: THREE.Mesh;
   private regionMeshes = new Map<number, THREE.Mesh>();
   private startRings = new Map<number, THREE.Mesh>();
@@ -314,6 +306,8 @@ export class GameScene {
   private unitMeshes = new Map<string, THREE.InstancedMesh>();
   private unitIdsByMesh = new Map<THREE.InstancedMesh, number[]>();
   private squadMarkers = new Map<string, THREE.Sprite>();
+  private anchorVisuals = new Map<number, THREE.Group>();
+  private squadBlobs = new Map<string, SquadBlobVisual>();
   private selectionRings = new Map<string, THREE.Mesh>();
   private snapshot: GameSnapshot | null = null;
   private snapshotUnsubscribe: (() => void) | null = null;
@@ -368,7 +362,7 @@ export class GameScene {
     this.ground.position.y = 0.08;
     this.ground.name = "command-ground";
     this.scene.add(this.ground);
-    this.scene.add(this.regionGroup, this.buildingGroup, this.cargoGroup, this.projectileGroup, this.selectionGroup, this.squadMarkerGroup);
+    this.scene.add(this.regionGroup, this.anchorGroup, this.buildingGroup, this.cargoGroup, this.projectileGroup, this.selectionGroup, this.squadBlobGroup, this.squadMarkerGroup);
 
     const grid = new THREE.GridHelper(MAP_HALF_SIZE * 2, 40, "#89906c", "#394037");
     grid.position.y = 0.09;
@@ -391,6 +385,7 @@ export class GameScene {
     this.resizeObserver.disconnect();
     this.snapshotUnsubscribe?.();
     this.clearSquadMarkers();
+    this.clearSquadBlobs();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -475,8 +470,11 @@ export class GameScene {
   private buildRegions(regions: Region[]): void {
     for (const child of [...this.regionGroup.children]) this.disposeObject(child);
     this.regionGroup.clear();
+    for (const child of [...this.anchorGroup.children]) this.disposeObject(child);
+    this.anchorGroup.clear();
     this.regionMeshes.clear();
     this.startRings.clear();
+    this.anchorVisuals.clear();
     for (const region of regions) {
       const shape = new THREE.Shape();
       const first = region.vertices[0];
@@ -532,6 +530,34 @@ export class GameScene {
         this.regionGroup.add(ring);
         this.startRings.set(region.id, ring);
       }
+
+      for (const anchor of region.anchors) {
+        const group = new THREE.Group();
+        const base = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.05, 1.3, 0.18, 7),
+          new THREE.MeshStandardMaterial({ color: "#22261f", emissive: "#11140f", roughness: 0.7, metalness: 0.16 }),
+        );
+        base.position.y = terrainY + 0.13;
+        const pulse = new THREE.Mesh(
+          new THREE.RingGeometry(0.72, 1.08, 20),
+          new THREE.MeshBasicMaterial({ color: "#c4c99e", transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        pulse.rotation.x = -Math.PI / 2;
+        pulse.position.y = terrainY + 0.24;
+        const spire = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.42, 0),
+          new THREE.MeshStandardMaterial({ color: "#c4c99e", emissive: "#53613e", emissiveIntensity: 0.35, roughness: 0.38 }),
+        );
+        spire.position.y = terrainY + 0.52;
+        group.add(base, pulse, spire);
+        group.userData.anchorId = anchor.id;
+        group.userData.regionId = region.id;
+        group.userData.pulse = pulse;
+        group.userData.spire = spire;
+        group.position.set(anchor.position.x, 0, anchor.position.z);
+        this.anchorGroup.add(group);
+        this.anchorVisuals.set(anchor.id, group);
+      }
     }
   }
 
@@ -555,6 +581,23 @@ export class GameScene {
         ringMaterial.color.set(state.selectedStartRegionId === region.id ? "#c8ff45" : "#d9e4b2");
         ringMaterial.opacity = state.selectedStartRegionId === region.id ? 0.95 : 0.42;
       }
+      for (const anchor of region.anchors) {
+        const visual = this.anchorVisuals.get(anchor.id);
+        if (!visual) continue;
+        visual.visible = region.discovered;
+        const pulse = visual.userData.pulse as THREE.Mesh;
+        const spire = visual.userData.spire as THREE.Mesh;
+        const claimant = anchor.captureFaction === "neutral" ? anchor.owner : anchor.captureFaction;
+        const color = claimant === "neutral" ? "#c4c99e" : FACTION_COLORS[claimant];
+        (pulse.material as THREE.MeshBasicMaterial).color.set(color);
+        (pulse.material as THREE.MeshBasicMaterial).opacity = anchor.owner === "neutral" ? 0.66 : 0.92;
+        const spireMaterial = spire.material as THREE.MeshStandardMaterial;
+        spireMaterial.color.set(color);
+        spireMaterial.emissive.set(color);
+        spireMaterial.emissiveIntensity = anchor.captureProgress < 100 ? 0.9 : 0.35;
+        const captureRatio = Math.max(0.4, anchor.captureProgress / 100);
+        pulse.scale.setScalar(0.84 + captureRatio * 0.34);
+      }
     }
   }
 
@@ -569,6 +612,12 @@ export class GameScene {
     }
     for (const building of buildings) {
       let visual = this.buildingVisuals.get(building.id);
+      if (visual && visual.building.level !== building.level) {
+        this.buildingGroup.remove(visual.group);
+        this.disposeObject(visual.group);
+        this.buildingVisuals.delete(building.id);
+        visual = undefined;
+      }
       if (!visual) {
         const group = makeBuildingModel(building);
         group.position.set(building.position.x, this.terrainHeight(building.regionId) + 0.1, building.position.z);
@@ -666,24 +715,30 @@ export class GameScene {
       list.push(visual);
       squads.set(key, list);
     }
-    type RenderUnit = { id: number; current: THREE.Vector3; heading: number; count: number };
+    type RenderUnit = { id: number; current: THREE.Vector3; heading: number };
     const grouped = new Map<string, RenderUnit[]>();
     const markers: Array<{ key: string; faction: FactionId; count: number; position: THREE.Vector3 }> = [];
+    const activeBlobs = new Set<string>();
     const focus = gameSession.getState().combatFocus;
     for (const [squadKey, members] of squads) {
       const faction = members[0]!.faction;
       const type = members[0]!.type;
       const renderKey = `${faction}:${type}`;
       const output = grouped.get(renderKey) ?? [];
-      const showDetail = focus !== null && members.some((member) => Math.hypot(member.current.x - focus.x, member.current.z - focus.z) <= 14);
+      const showDetail = (focus !== null && members.some((member) => Math.hypot(member.current.x - focus.x, member.current.z - focus.z) <= 14)) ||
+        this.squadIsMakingRegionalDecision(members);
       if (showDetail) {
-        for (const member of members) output.push({ id: member.id, current: member.current, heading: member.heading, count: 1 });
+        for (const member of members) output.push({ id: member.id, current: member.current, heading: member.heading });
       } else {
         const center = members.reduce((sum, member) => sum.add(member.current), new THREE.Vector3()).multiplyScalar(1 / members.length);
-        output.push({ id: members[0]!.id, current: center, heading: members[0]!.heading, count: members.length });
+        this.updateSquadBlob(squadKey, faction, members[0]!.id, center, members.length, members[0]!.heading);
+        activeBlobs.add(squadKey);
         markers.push({ key: squadKey, faction, count: members.length, position: center });
       }
       grouped.set(renderKey, output);
+    }
+    for (const key of [...this.squadBlobs.keys()]) {
+      if (!activeBlobs.has(key)) this.removeSquadBlob(key);
     }
     this.updateSquadMarkers(markers);
     const dummy = new THREE.Object3D();
@@ -698,7 +753,7 @@ export class GameScene {
           dummy.position.copy(visual.current);
           dummy.rotation.set(type === "scout" ? Math.PI : 0, visual.heading, 0);
           const pulse = this.settings.reducedMotion ? 1 : 1 + Math.sin(this.clock.elapsedTime * 3 + visual.id) * 0.025;
-          dummy.scale.setScalar(pulse * (1 + (visual.count - 1) * 0.08));
+          dummy.scale.setScalar(pulse);
           dummy.updateMatrix();
           mesh.setMatrixAt(index, dummy.matrix);
           ids.push(visual.id);
@@ -708,6 +763,72 @@ export class GameScene {
         this.unitIdsByMesh.set(mesh, ids);
       }
     }
+  }
+
+  private squadIsMakingRegionalDecision(members: UnitVisual[]): boolean {
+    if (!this.snapshot) return false;
+    const center = members.reduce((sum, member) => sum.add(member.current), new THREE.Vector3()).multiplyScalar(1 / members.length);
+    const region = this.snapshot.regions.find((candidate) => pointInPolygon({ x: center.x, z: center.z }, candidate.vertices));
+    if (!region) return false;
+    return region.anchors.some((anchor) => {
+      const unresolved = anchor.captureProgress < 100 || anchor.owner !== region.owner;
+      return unresolved && Math.hypot(center.x - anchor.position.x, center.z - anchor.position.z) <= 7.5;
+    });
+  }
+
+  private createSquadBlob(faction: FactionId): SquadBlobVisual {
+    const group = new THREE.Group();
+    const color = FACTION_COLORS[faction];
+    const shadow = new THREE.MeshBasicMaterial({ color: "#080a08", transparent: true, opacity: 0.45, depthWrite: false });
+    const ink = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.86, depthWrite: false });
+    const rim = new THREE.MeshBasicMaterial({ color: "#edf4c6", transparent: true, opacity: 0.24, depthWrite: false });
+    const lobes: Array<[number, number, number]> = [[0, 0, 1], [-0.58, 0.18, 0.62], [0.56, -0.16, 0.7]];
+    for (const [x, z, scale] of lobes) {
+      const cast = new THREE.Mesh(new THREE.CircleGeometry(1, 16), shadow);
+      cast.rotation.x = -Math.PI / 2;
+      cast.position.set(x + 0.13, 0.13, z + 0.18);
+      cast.scale.set(scale * 1.22, scale, 1);
+      group.add(cast);
+      const lobe = new THREE.Mesh(new THREE.CircleGeometry(1, 16), ink);
+      lobe.rotation.x = -Math.PI / 2;
+      lobe.position.set(x, 0.17, z);
+      lobe.scale.set(scale * 1.2, scale, 1);
+      group.add(lobe);
+    }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.96, 1.05, 20), rim);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.19;
+    group.add(ring);
+    return { group, faction, count: 0 };
+  }
+
+  private updateSquadBlob(key: string, faction: FactionId, unitId: number, position: THREE.Vector3, count: number, heading: number): void {
+    let blob = this.squadBlobs.get(key);
+    if (!blob) {
+      blob = this.createSquadBlob(faction);
+      blob.group.userData.representativeUnitId = unitId;
+      this.squadBlobGroup.add(blob.group);
+      this.squadBlobs.set(key, blob);
+    }
+    blob.count = count;
+    blob.group.userData.representativeUnitId = unitId;
+    blob.group.position.set(position.x, Math.max(0.14, position.y - 0.58), position.z);
+    blob.group.rotation.y = heading;
+    const pulse = this.settings.reducedMotion ? 1 : 1 + Math.sin(this.clock.elapsedTime * 3.4 + unitId) * 0.035;
+    const size = (1 + Math.sqrt(count - 1) * 0.32) * pulse;
+    blob.group.scale.set(size * 1.22, 1, size);
+  }
+
+  private removeSquadBlob(key: string): void {
+    const blob = this.squadBlobs.get(key);
+    if (!blob) return;
+    this.squadBlobGroup.remove(blob.group);
+    this.disposeObject(blob.group);
+    this.squadBlobs.delete(key);
+  }
+
+  private clearSquadBlobs(): void {
+    for (const key of [...this.squadBlobs.keys()]) this.removeSquadBlob(key);
   }
 
   private updateSquadMarkers(markers: Array<{ key: string; faction: FactionId; count: number; position: THREE.Vector3 }>): void {
@@ -885,7 +1006,7 @@ export class GameScene {
       if (type) {
         const placeholder: Building = {
           id: -1, faction: "player", type, position: { x: 0, z: 0 }, regionId: -1,
-          hp: 1, maxHp: 1, construction: 1, active: true, powered: true,
+          hp: 1, maxHp: 1, construction: 1, level: 1, upgradeProgress: 0, upgrading: false, active: true, powered: true,
           orientation: 0, queue: [], boatQueue: [], productionProgress: 0, boatProductionProgress: 0, cooldown: 0,
         };
         this.ghost = makeBuildingModel(placeholder);
@@ -916,10 +1037,7 @@ export class GameScene {
     const definition = BUILDINGS[type];
     const region = snapshot?.regions.find((candidate) => pointInPolygon(position, candidate.vertices));
     this.ghost.rotation.y = this.previewOrientation(type, position, region);
-    const hasWorker = snapshot?.units.some((unit) =>
-      unit.faction === "player" && unit.type === "worker" &&
-      Math.hypot(unit.position.x - position.x, unit.position.z - position.z) <= (type === "conveyor" || type === "wall" ? 24 : 18),
-    );
+    const hasWorker = (region?.workers.player ?? 0) > 0;
     const clear = !snapshot?.buildings.some((building) => {
       const factor = type === "conveyor" || building.type === "conveyor" ? 0.39 : 0.57;
       const minimum = (definition.size + BUILDINGS[building.type].size) * factor;
@@ -931,7 +1049,9 @@ export class GameScene {
       (definition.cost.water ?? 0) <= snapshot.resources.player.water;
     const needsWater = type === "waterExtractor" || type === "port";
     const hasWaterAccess = !needsWater || !!region?.neighbors.some((id) => snapshot?.regions.find((candidate) => candidate.id === id)?.biome === "water");
-    const valid = region?.owner === "player" && region.biome !== "water" && hasWorker && clear && affordable && hasWaterAccess;
+    const controlsClaim = !!region && region.anchors.filter((anchor) => anchor.owner === "player").length >= Math.ceil(region.anchors.length / 2);
+    const validTerritory = region?.owner === "player" || (type === "relay" && controlsClaim);
+    const valid = !!region && validTerritory && region.biome !== "water" && hasWorker && clear && affordable && hasWaterAccess;
     this.ghost.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.MeshStandardMaterial)) return;
       object.material.color.set(valid ? "#c8ff45" : "#ff5b49");
@@ -1202,6 +1322,17 @@ export class GameScene {
         return;
       }
     }
+    const blobHits = this.raycaster.intersectObjects([...this.squadBlobs.values()].map((blob) => blob.group), true);
+    for (const hit of blobHits) {
+      let object: THREE.Object3D | null = hit.object;
+      while (object && object.userData.representativeUnitId === undefined) object = object.parent;
+      const id = object?.userData.representativeUnitId as number | undefined;
+      const unit = this.snapshot?.units.find((candidate) => candidate.id === id && candidate.faction === "player");
+      if (unit) {
+        gameSession.selectSquadFromUnit(unit.id, additive);
+        return;
+      }
+    }
     const unitHits = this.raycaster.intersectObjects([...this.unitMeshes.values()], false);
     const unitHit = unitHits[0];
     if (unitHit?.object instanceof THREE.InstancedMesh && unitHit.instanceId !== undefined) {
@@ -1223,11 +1354,19 @@ export class GameScene {
         return;
       }
     }
-    if (!additive) gameSession.selectUnits([]);
+    if (!additive) gameSession.selectRegion(this.pickRegion());
   }
 
   private pickEnemyEntity(): { id: number; kind: "unit" | "building" } | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
+    const blobHit = this.raycaster.intersectObjects([...this.squadBlobs.values()].map((blob) => blob.group), true)[0];
+    if (blobHit) {
+      let object: THREE.Object3D | null = blobHit.object;
+      while (object && object.userData.representativeUnitId === undefined) object = object.parent;
+      const id = object?.userData.representativeUnitId as number | undefined;
+      const unit = this.snapshot?.units.find((candidate) => candidate.id === id && candidate.faction === "enemy");
+      if (unit) return { id: unit.id, kind: "unit" };
+    }
     const unitHit = this.raycaster.intersectObjects([...this.unitMeshes.values()], false)[0];
     if (unitHit?.object instanceof THREE.InstancedMesh && unitHit.instanceId !== undefined) {
       const id = this.unitIdsByMesh.get(unitHit.object)?.[unitHit.instanceId];

@@ -1,6 +1,6 @@
 import { BIOMES, MAP_HALF_SIZE } from "./config";
 import { SeededRandom } from "./random";
-import type { BiomeId, MapPreset, Region, Vec2 } from "./types";
+import type { BiomeId, MapPreset, Region, RegionAnchor, Vec2 } from "./types";
 
 interface Site extends Vec2 {
   id: number;
@@ -116,6 +116,22 @@ export function findRegionAt(regions: Region[], point: Vec2): Region | undefined
   return regions.find((region) => pointInPolygon(point, region.vertices));
 }
 
+function createAnchors(center: Vec2, vertices: Vec2[], random: SeededRandom, regionId: number): RegionAnchor[] {
+  const anchors: RegionAnchor[] = [];
+  const rotation = random.between(0, Math.PI * 2);
+  for (let index = 0; index < 3; index += 1) {
+    const angle = rotation + (index / 3) * Math.PI * 2;
+    let radius = random.between(4.2, 5.7);
+    let position = { x: center.x + Math.cos(angle) * radius, z: center.z + Math.sin(angle) * radius };
+    while (!pointInPolygon(position, vertices) && radius > 1.5) {
+      radius -= 0.65;
+      position = { x: center.x + Math.cos(angle) * radius, z: center.z + Math.sin(angle) * radius };
+    }
+    anchors.push({ id: regionId * 10 + index, position, owner: "neutral", captureFaction: "neutral", captureProgress: 0 });
+  }
+  return anchors;
+}
+
 const GRID_SIZES: Record<MapPreset, number> = { compact: 4, standard: 5, frontier: 6 };
 
 export function createMap(seed: number, preset: MapPreset = "standard"): Region[] {
@@ -176,6 +192,8 @@ export function createMap(seed: number, preset: MapPreset = "standard"): Region[
       owner: "neutral",
       captureFaction: "neutral",
       captureProgress: 0,
+      anchors: biome === "water" ? [] : createAnchors(center, vertices, random, site.id),
+      workers: { player: 0, enemy: 0 },
       discovered: false,
       visible: false,
       startCandidate: biome !== "water" && distanceFromCenter >= 14,

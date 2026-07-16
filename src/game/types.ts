@@ -19,13 +19,11 @@ export type BuildingType =
   | "generator"
   | "storage"
   | "vat"
-  | "bioExtractor"
-  | "oreExtractor"
+  | "extractor"
   | "waterExtractor"
   | "conveyor"
   | "relay"
   | "turret"
-  | "lab"
   | "wall"
   | "port";
 export type UnitType = "worker" | "scout" | "assault" | "breaker";
@@ -43,6 +41,14 @@ export interface Vec2 {
   z: number;
 }
 
+export interface RegionAnchor {
+  id: number;
+  position: Vec2;
+  owner: RegionOwner;
+  captureFaction: RegionOwner;
+  captureProgress: number;
+}
+
 export interface Region {
   id: number;
   name: string;
@@ -54,6 +60,8 @@ export interface Region {
   owner: RegionOwner;
   captureFaction: RegionOwner;
   captureProgress: number;
+  anchors: RegionAnchor[];
+  workers: Record<FactionId, number>;
   discovered: boolean;
   visible: boolean;
   startCandidate: boolean;
@@ -67,6 +75,7 @@ export interface ResourceStock {
   energyProduced: number;
   energyUsed: number;
   research: number;
+  workers: number;
 }
 
 export interface Building {
@@ -78,6 +87,9 @@ export interface Building {
   hp: number;
   maxHp: number;
   construction: number;
+  level: number;
+  upgradeProgress: number;
+  upgrading: boolean;
   active: boolean;
   powered: boolean;
   orientation: number;
@@ -212,6 +224,8 @@ export type PlayerCommand =
   | { type: "deploy"; regionId: number }
   | { type: "placeBuilding"; buildingType: BuildingType; position: Vec2 }
   | { type: "queueClone"; buildingId: number; unitType: UnitType }
+  | { type: "assignWorker"; regionId: number; amount: 1 | -1 }
+  | { type: "upgradeBuilding"; buildingId: number }
   | { type: "queueBoat"; buildingId: number; boatType: BoatType }
   | { type: "boardBoat"; boatId: number; unitIds: number[] }
   | { type: "setBoatOrder"; boatId: number; target: Vec2 }

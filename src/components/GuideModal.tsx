@@ -39,10 +39,10 @@ function StartTab() {
       </div>
       <div className="guide-steps">
         <article><span>01</span><div><h3>Choisir un tissu</h3><p>Cliquez une région cerclée sur la carte. La forêt produit beaucoup de biomasse, la carrière beaucoup de minerai, la faille beaucoup d’énergie. Une plaine est équilibrée.</p></div></article>
-        <article><span>02</span><div><h3>Déployer l'équipe</h3><p>Validez en bas à droite. Vous recevez quatre ouvriers et un stock de départ : aucun bâtiment n'est préinstallé.</p></div></article>
-        <article><span>03</span><div><h3>Ériger la colonie</h3><p>Placez d'abord le noyau <kbd>N</kbd>, puis une moissonneuse <kbd>B</kbd>, une foreuse <kbd>O</kbd> et un stockage. Reliez les extracteurs au stockage avec des convoyeurs <kbd>C</kbd>.</p></div></article>
-        <article><span>04</span><div><h3>Multiplier la force</h3><p>Cliquez la cuve violette/verte, puis ajoutez des clones dans sa file. Commencez par des éclaireurs et des clones d’assaut.</p></div></article>
-        <article><span>05</span><div><h3>Prendre l’initiative</h3><p>Sélectionnez vos clones par clic ou rectangle. Clic droit pour avancer, Maj + clic droit pour attaquer en mouvement. Envoyez une escouade dans une région neutre pour la capturer.</p></div></article>
+        <article><span>02</span><div><h3>Déployer l'équipe</h3><p>Validez en bas à droite. Vous recevez deux ouvriers affectés au premier territoire : aucun bâtiment n'est préinstallé.</p></div></article>
+        <article><span>03</span><div><h3>Ériger la colonie</h3><p>Placez d'abord le noyau <kbd>N</kbd>, puis un extracteur symbiotique <kbd>B</kbd> et un stockage. Le même extracteur récolte biomasse et minerai ; reliez-le avec des convoyeurs <kbd>C</kbd>.</p></div></article>
+        <article><span>04</span><div><h3>Multiplier la force</h3><p>La Cuve ADN produit les clones au niveau 1. Son niveau 2 accélère la gestation et ouvre les mutations ADN.</p></div></article>
+        <article><span>05</span><div><h3>Prendre l’initiative</h3><p>Chaque terre possède trois nœuds organiques. Prenez-en deux avec une escouade, puis posez un Relais territorial avec un ouvrier pour stabiliser définitivement la région.</p></div></article>
       </div>
       <div className="guide-tip"><b>CONSEIL DE DÉPART</b><span>Ne construisez pas toute la base d’un coup. Une seule ligne biomasse → stockage → cuve qui fonctionne vaut mieux que dix bâtiments hors tension.</span></div>
     </div>
@@ -51,7 +51,7 @@ function StartTab() {
 
 function EconomyTab() {
   const biomes = Object.entries(BIOMES) as Array<[keyof typeof BIOMES, typeof BIOMES[keyof typeof BIOMES]]>;
-  const buildings = ["bioExtractor", "oreExtractor", "waterExtractor", "conveyor", "generator", "storage", "port", "vat", "relay", "turret", "lab", "wall"] as const;
+  const buildings = ["extractor", "waterExtractor", "conveyor", "generator", "storage", "port", "vat", "relay", "turret", "wall"] as const;
   return (
     <div className="guide-content">
       <SectionHeading
@@ -64,6 +64,7 @@ function EconomyTab() {
         <article><span className="guide-resource-symbol symbol-ore">M</span><div><h3>MINERAI</h3><p>Construit convoyeurs, défenses et blindages. Les carrières ferriques sont les meilleures sources.</p></div></article>
         <article><span className="guide-resource-symbol symbol-water">A</span><div><h3>EAU</h3><p>Pompez-la depuis une terre qui borde un canal. Elle alimente les ports, les échanges et les transports amphibies.</p></div></article>
         <article><span className="guide-resource-symbol symbol-energy">E</span><div><h3>ÉNERGIE</h3><p>Le générateur alimente les bâtiments proches du réseau. Un bâtiment hors réseau ou en déficit cesse de produire.</p></div></article>
+        <article><span className="guide-resource-symbol symbol-bio">O</span><div><h3>OUVRIERS</h3><p>Ils vivent dans les territoires, pas sur le terrain. Un ouvrier autorise la construction, deux l’accélèrent, et quatre rendent les chantiers instantanés.</p></div></article>
       </div>
       <div className="guide-subheading"><span>RENDEMENTS DES RÉGIONS</span><small>BASE 1.00×</small></div>
       <div className="guide-biome-grid">
@@ -108,7 +109,7 @@ function ArsenalTab() {
         {Object.values(BOATS).map((boat) => <div key={boat.code}><b>{boat.name}</b><span>{boat.capacity} places · {boat.speed.toFixed(1)} vitesse</span><em>A{boat.cost.water ?? 0} · {boat.description}</em></div>)}
       </div>
       <div className="guide-tip"><b>ROUTES PORTUAIRES</b><span>Deux ports actifs placés sur des terres séparées expédient automatiquement des navires d’échange. Plus la traversée est longue, plus le convoi rapporte de matériaux aux deux extrémités.</span></div>
-      <div className="guide-subheading"><span>MUTATIONS ADN</span><small>LE LABORATOIRE OUVRE DES CHOIX À CHAQUE PALIER</small></div>
+      <div className="guide-subheading"><span>MUTATIONS ADN</span><small>LA CUVE ADN NIVEAU 2 OUVRE LES CHOIX À CHAQUE PALIER</small></div>
       <div className="guide-mutation-list">
         <div><b>GESTATION FLASH</b><span>+40 % vitesse de production</span><em>−10 % PV clones</em></div>
         <div><b>TISSU RENFORCÉ</b><span>+28 % PV clones</span><em>−10 % vitesse</em></div>

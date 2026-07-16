@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { BIOMES, BOATS, BUILDINGS, MUTATION_THRESHOLDS, UNITS } from "../game/config";
+import { BIOMES, BOATS, BUILDINGS, MUTATION_THRESHOLDS, UNITS, VAT_LEVEL_TWO } from "../game/config";
 import { gameSession, type SessionState } from "../game/session";
 import { loadSettings } from "../game/persistence";
 import type { Boat, BoatType, BuildingType, GameSnapshot, UnitType } from "../game/types";
@@ -11,8 +11,8 @@ interface HudProps {
 }
 
 const BUILD_ORDER: BuildingType[] = [
-  "core", "bioExtractor", "oreExtractor", "conveyor", "generator", "storage",
-  "waterExtractor", "port", "vat", "relay", "turret", "lab", "wall",
+  "core", "extractor", "conveyor", "generator", "storage",
+  "waterExtractor", "port", "vat", "relay", "turret", "wall",
 ];
 const UNIT_ORDER: UnitType[] = ["worker", "scout", "assault", "breaker"];
 
@@ -38,7 +38,7 @@ function TutorialProtocol({ snapshot, visible }: { snapshot: GameSnapshot; visib
   const playerUnits = snapshot.units.filter((unit) => unit.faction === "player");
   const steps = [
     { label: "IMPLANTER LE NOYAU", done: playerBuildings.some((building) => building.type === "core") },
-    { label: "EXTRAIRE ET STOCKER", done: playerBuildings.some((building) => building.type === "storage") && playerBuildings.some((building) => building.type === "bioExtractor" || building.type === "oreExtractor") },
+    { label: "EXTRAIRE ET STOCKER", done: playerBuildings.some((building) => building.type === "storage") && playerBuildings.some((building) => building.type === "extractor") },
     { label: "PRODUIRE UN CLONE", done: snapshot.stats.clonesProduced > 0 || playerUnits.length > 4 },
     { label: "ASSIMILER UN SECTEUR", done: snapshot.regions.filter((region) => region.owner === "player").length > 1 },
     { label: "DÉTRUIRE LE NOYAU RIVAL", done: snapshot.phase === "victory" },
@@ -130,6 +130,7 @@ function SelectionPanel({ state, snapshot, bindings }: HudProps & { bindings: Re
   const selectedBuilding = snapshot.buildings.find((building) => building.id === state.selectedBuildingId);
   const selectedUnits = snapshot.units.filter((unit) => state.selectedUnitIds.includes(unit.id));
   const selectedBoat = snapshot.boats.find((boat) => boat.id === state.selectedBoatId);
+  const selectedRegion = snapshot.regions.find((region) => region.id === state.selectedRegionId);
   if (selectedBoat) return <BoatPanel boat={selectedBoat} snapshot={snapshot} selectedUnitIds={state.selectedUnitIds} />;
   if (selectedBuilding) {
     const definition = BUILDINGS[selectedBuilding.type];
@@ -148,6 +149,12 @@ function SelectionPanel({ state, snapshot, bindings }: HudProps & { bindings: Re
         ) : null}
         {selectedBuilding.type === "vat" ? (
           <>
+            <div className="core-autonomy vat-level-card"><span>CUVE ADN · NIVEAU {selectedBuilding.level}</span><b>{selectedBuilding.level >= 2 ? `GESTATION ×${VAT_LEVEL_TWO.productionMultiplier}` : "PRODUCTION DE CLONES"}</b><small>{selectedBuilding.level >= 2 ? `MUTATIONS ACTIVES · +${VAT_LEVEL_TWO.researchPerSecond.toFixed(2)} ADN/s` : "Évoluez vers le niveau 2 pour accélérer la gestation et ouvrir les mutations."}</small></div>
+            {selectedBuilding.level === 1 ? (
+              <button type="button" className="vat-upgrade-button" disabled={selectedBuilding.upgrading || selectedBuilding.construction < 1} onClick={() => gameSession.upgradeBuilding(selectedBuilding.id)}>
+                {selectedBuilding.upgrading ? `ÉVOLUTION ADN ${Math.floor(selectedBuilding.upgradeProgress * 100)}%` : `ÉVOLUER NIVEAU 2 · B${VAT_LEVEL_TWO.cost.biomass} M${VAT_LEVEL_TWO.cost.ore}`}
+              </button>
+            ) : null}
             <div className="queue-line"><span>FILE DE GESTATION</span><b>{selectedBuilding.queue.length}/12</b></div>
             <div className="clone-buttons">
               {UNIT_ORDER.map((type) => {
@@ -182,6 +189,23 @@ function SelectionPanel({ state, snapshot, bindings }: HudProps & { bindings: Re
       </section>
     );
   }
+  if (selectedRegion) {
+    const localWorkers = selectedRegion.workers.player;
+    const canAssign = selectedRegion.owner === "player" || selectedRegion.captureFaction === "player";
+    return (
+      <section className="selection-panel territory-selection-panel">
+        <div className="selection-code">SECTEUR/{String(selectedRegion.id + 1).padStart(2, "0")}</div>
+        <p className="micro-label">MAIN-D’ŒUVRE TERRITORIALE</p>
+        <h3>{selectedRegion.name}</h3>
+        <div className="core-autonomy vat-level-card"><span>OUVRIERS AFFECTÉS</span><b>{localWorkers}/4</b><small>{localWorkers === 0 ? "Aucune construction possible." : localWorkers >= 4 ? "Construction et évolution instantanées." : localWorkers === 1 ? "Construction standard." : "Construction accélérée."}</small></div>
+        <div className="territory-worker-actions">
+          <button type="button" disabled={!canAssign || snapshot.resources.player.workers < 1} onClick={() => gameSession.assignWorker(selectedRegion.id, 1)}>AFFECTER +1</button>
+          <button type="button" disabled={!canAssign || localWorkers < 1} onClick={() => gameSession.assignWorker(selectedRegion.id, -1)}>RAPPELER −1</button>
+        </div>
+        <div className="order-reminder"><b>RÉSERVE : {snapshot.resources.player.workers}</b><br />PRODUISEZ DES OUVRIERS DANS UNE CUVE ADN, PUIS AFFECTEZ-LES ICI.</div>
+      </section>
+    );
+  }
   if (selectedUnits.length > 0) {
     const counts = UNIT_ORDER.map((type) => ({ type, count: selectedUnits.filter((unit) => unit.type === type).length })).filter((entry) => entry.count > 0);
     const hp = selectedUnits.reduce((sum, unit) => sum + unit.hp, 0);
@@ -212,10 +236,15 @@ export function Hud({ state, snapshot }: HudProps) {
   const settings = useMemo(() => loadSettings(), []);
   const bindings = settings.keybindings;
   const stock = snapshot.resources.player;
+  const totalWorkers = stock.workers + snapshot.regions.reduce((sum, region) => sum + region.workers.player, 0);
   const owned = snapshot.regions.filter((region) => region.owner === "player").length;
   const researchLevel = snapshot.mutations.player.length;
   const nextResearch = MUTATION_THRESHOLDS[researchLevel] ?? MUTATION_THRESHOLDS.at(-1)!;
   const focusRegion = snapshot.regions.find((region) => region.id === state.hoveredRegionId);
+  const focusAnchorCounts = focusRegion ? {
+    player: focusRegion.anchors.filter((anchor) => anchor.owner === "player").length,
+    enemy: focusRegion.anchors.filter((anchor) => anchor.owner === "enemy").length,
+  } : null;
   const latestNotifications = snapshot.notifications.slice(-4).reverse();
 
   return (
@@ -226,6 +255,7 @@ export function Hud({ state, snapshot }: HudProps) {
           <ResourceReadout code="BIO" value={stock.biomass} />
           <ResourceReadout code="MIN" value={stock.ore} />
           <ResourceReadout code="EAU" value={stock.water} />
+          <ResourceReadout code="OUV" value={totalWorkers} rate={`R${stock.workers}`} />
           <ResourceReadout code="NRJ" value={stock.energyProduced - stock.energyUsed} rate={`${Math.ceil(stock.energyUsed)}/${Math.floor(stock.energyProduced)}`} />
           <div className="research-readout"><span>ADN</span><div><i style={{ width: `${Math.min(100, stock.research / nextResearch * 100)}%` }} /></div><b>{Math.floor(stock.research)}/{nextResearch}</b></div>
         </div>
@@ -247,6 +277,8 @@ export function Hud({ state, snapshot }: HudProps) {
             <span>{BIOMES[focusRegion.biome].code}/{focusRegion.id + 1}</span>
             <b>{focusRegion.name}</b>
             <small>B {focusRegion.yields.biomass.toFixed(1)} · M {focusRegion.yields.ore.toFixed(1)} · E {focusRegion.yields.energy.toFixed(1)}</small>
+            {focusRegion.anchors.length > 0 && focusAnchorCounts ? <small className="anchor-readout">NŒUDS · VOUS {focusAnchorCounts.player}/{focusRegion.anchors.length} · RIVAL {focusAnchorCounts.enemy}/{focusRegion.anchors.length}</small> : null}
+            {focusRegion.captureFaction === "player" && focusRegion.owner !== "player" ? <em>MAJORITÉ OBTENUE — POSEZ UN RELAIS</em> : null}
           </div>
         ) : null}
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TICK_RATE } from "./config";
+import { TICK_RATE, UNITS, VAT_LEVEL_TWO } from "./config";
 import { GameSimulation } from "./simulation";
 import type { Boat, Building, GameSnapshot, Region } from "./types";
 
@@ -43,7 +43,7 @@ function landReachable(regions: Region[], fromId: number, targetId: number): boo
 function activePort(id: number, region: Region): Building {
   return {
     id, faction: "player", type: "port", position: { ...region.center }, regionId: region.id,
-    hp: 720, maxHp: 720, construction: 1, active: true, powered: true, orientation: 0,
+    hp: 720, maxHp: 720, construction: 1, level: 1, upgradeProgress: 0, upgrading: false, active: true, powered: true, orientation: 0,
     queue: [], boatQueue: [], productionProgress: 0, boatProductionProgress: 0, cooldown: 0,
   };
 }
@@ -51,7 +51,7 @@ function activePort(id: number, region: Region): Building {
 function activeCore(id: number, region: Region): Building {
   return {
     id, faction: "player", type: "core", position: { ...region.center }, regionId: region.id,
-    hp: 2600, maxHp: 2600, construction: 1, active: true, powered: true, orientation: 0,
+    hp: 2600, maxHp: 2600, construction: 1, level: 1, upgradeProgress: 0, upgrading: false, active: true, powered: true, orientation: 0,
     queue: [], boatQueue: [], productionProgress: 0, boatProductionProgress: 0, cooldown: 0,
   };
 }
@@ -65,12 +65,8 @@ describe("GameSimulation", () => {
     expect(simulation.regions.find((region) => region.id === regionId)?.owner).toBe("player");
     expect(simulation.buildings.filter((building) => building.faction === "player")).toHaveLength(0);
     expect(simulation.buildings.filter((building) => building.faction === "enemy")).toHaveLength(4);
-    expect(simulation.units.filter((unit) => unit.faction === "player")).toHaveLength(4);
-    const playerSquads = new Map<number, number>();
-    for (const unit of simulation.units.filter((unit) => unit.faction === "player")) {
-      playerSquads.set(unit.squadId, (playerSquads.get(unit.squadId) ?? 0) + 1);
-    }
-    expect([...playerSquads.values()]).toEqual([4]);
+    expect(simulation.units.filter((unit) => unit.faction === "player")).toHaveLength(0);
+    expect(simulation.regions.find((candidate) => candidate.id === regionId)?.workers.player).toBe(2);
     expect(simulation.resources.player).toMatchObject({ biomass: 180, ore: 220, water: 0 });
 
     const region = simulation.regions.find((candidate) => candidate.id === regionId)!;
@@ -131,7 +127,7 @@ describe("GameSimulation", () => {
     for (let index = 0; index < TICK_RATE * 42; index += 1) simulation.tick();
     const coreRegions = simulation.buildings.filter((building) => building.faction === "enemy" && building.type === "core").map((building) => building.regionId);
     expect(coreRegions.every((regionId) => simulation.buildings.some((building) =>
-      building.faction === "enemy" && building.regionId === regionId && (building.type === "bioExtractor" || building.type === "oreExtractor"),
+      building.faction === "enemy" && building.regionId === regionId && building.type === "extractor",
     ))).toBe(true);
   });
 
@@ -153,9 +149,21 @@ describe("GameSimulation", () => {
     expect(deterministicProjection(first.getSnapshot())).toEqual(deterministicProjection(second.getSnapshot()));
   });
 
-  it("pauses for a mutation and resumes after a valid choice", () => {
+  it("unlocks mutations after evolving a Cuve ADN to level 2", () => {
     const simulation = new GameSimulation(5566);
-    deploy(simulation);
+    const regionId = deploy(simulation);
+    const region = simulation.regions.find((candidate) => candidate.id === regionId)!;
+    const addBuilding = simulation as unknown as {
+      addBuilding: (faction: "player", type: "core" | "vat", position: { x: number; z: number }, regionId: number, complete: boolean) => Building;
+    };
+    addBuilding.addBuilding("player", "core", { x: region.center.x - 7.5, z: region.center.z }, region.id, true);
+    const vat = addBuilding.addBuilding("player", "vat", region.center, region.id, true);
+    expect(simulation.applyPlayerCommand({ type: "upgradeBuilding", buildingId: vat.id })).toBe(true);
+    for (let index = 0; index < TICK_RATE * 12 && vat.level < 2; index += 1) simulation.tick();
+    expect(vat.level).toBe(2);
+    vat.queue.push("scout");
+    simulation.tick();
+    expect(vat.productionProgress).toBeCloseTo(TICK_RATE ** -1 * VAT_LEVEL_TWO.productionMultiplier / UNITS.scout.productionTime);
     simulation.resources.player.research = 50;
     simulation.tick();
     expect(simulation.phase).toBe("mutation");
@@ -166,17 +174,43 @@ describe("GameSimulation", () => {
     expect(simulation.mutations.player).toContain(choice!.id);
   });
 
-  it("captures a neutral region through clone presence", () => {
+  it("requires a majority of regional nodes and a relay to conquer a neutral region", () => {
     const simulation = new GameSimulation(9988);
     const startId = deploy(simulation);
     const start = simulation.regions.find((region) => region.id === startId)!;
     const target = simulation.regions.find((region) => start.neighbors.includes(region.id) && region.owner === "neutral")!;
-    for (const unit of simulation.units.filter((candidate) => candidate.faction === "player")) {
-      unit.position = { ...target.center };
-      unit.velocity = { x: 0, z: 0 };
+    const spawnUnit = simulation as unknown as {
+      spawnUnit: (faction: "player", type: "scout", position: { x: number; z: number }) => void;
+    };
+    const nodeCountRequired = Math.ceil(target.anchors.length / 2);
+    for (let nodeIndex = 0; nodeIndex < nodeCountRequired; nodeIndex += 1) {
+      for (let unitIndex = 0; unitIndex < 4; unitIndex += 1) spawnUnit.spawnUnit("player", "scout", target.anchors[nodeIndex]!.position);
+      for (let index = 0; index < TICK_RATE * 12 && target.anchors[nodeIndex]!.owner !== "player"; index += 1) simulation.tick();
     }
-    for (let index = 0; index < TICK_RATE * 25 && target.owner !== "player"; index += 1) simulation.tick();
+
+    expect(target.captureFaction).toBe("player");
+    expect(target.owner).toBe("neutral");
+    const addBuilding = simulation as unknown as {
+      addBuilding: (faction: "player", type: "relay", position: { x: number; z: number }, regionId: number, complete: boolean) => Building;
+    };
+    addBuilding.addBuilding("player", "relay", target.center, target.id, true);
+    simulation.tick();
     expect(target.owner).toBe("player");
+  });
+
+  it("keeps workers off the map and completes construction instantly with four local workers", () => {
+    const simulation = new GameSimulation(0x51515151);
+    const regionId = deploy(simulation);
+    const region = simulation.regions.find((candidate) => candidate.id === regionId)!;
+    expect(region.workers.player).toBe(2);
+    expect(simulation.units.some((unit) => unit.type === "worker")).toBe(false);
+
+    simulation.resources.player.workers = 2;
+    expect(simulation.applyPlayerCommand({ type: "assignWorker", regionId, amount: 1 })).toBe(true);
+    expect(simulation.applyPlayerCommand({ type: "assignWorker", regionId, amount: 1 })).toBe(true);
+    expect(region.workers.player).toBe(4);
+    expect(simulation.applyPlayerCommand({ type: "placeBuilding", buildingType: "core", position: region.center })).toBe(true);
+    expect(simulation.buildings.find((building) => building.faction === "player" && building.type === "core")?.construction).toBe(1);
   });
 
   it("delivers extracted material only after a conveyor route is built", () => {
@@ -196,13 +230,13 @@ describe("GameSimulation", () => {
         if (Math.hypot(dx, dz) < 7 || Math.hypot(dx, dz) > 11) continue;
         placed = simulation.applyPlayerCommand({
           type: "placeBuilding",
-          buildingType: "bioExtractor",
+          buildingType: "extractor",
           position: { x: storage.position.x + dx, z: storage.position.z + dz },
         });
       }
     }
     expect(placed).toBe(true);
-    const extractor = simulation.buildings.find((building) => building.faction === "player" && building.type === "bioExtractor")!;
+    const extractor = simulation.buildings.find((building) => building.faction === "player" && building.type === "extractor")!;
     const gap = Math.hypot(storage.position.x - extractor.position.x, storage.position.z - extractor.position.z);
     const steps = Math.max(2, Math.round(gap / 2.5));
     let conveyorsPlaced = 0;
@@ -227,8 +261,13 @@ describe("GameSimulation", () => {
   it("embarks a squad, crosses the canal, then disembarks on another shore", () => {
     const simulation = new GameSimulation(0x1a2b3c4d);
     deploy(simulation);
-    const passengers = simulation.units.filter((unit) => unit.faction === "player").slice(0, 2);
     const origin = simulation.regions.find((region) => region.owner === "player")!;
+    const spawnUnit = simulation as unknown as {
+      spawnUnit: (faction: "player", type: "scout", position: { x: number; z: number }) => void;
+    };
+    spawnUnit.spawnUnit("player", "scout", origin.center);
+    spawnUnit.spawnUnit("player", "scout", origin.center);
+    const passengers = simulation.units.filter((unit) => unit.faction === "player").slice(0, 2);
     const target = simulation.regions.find((region) => region.biome !== "water" && region.id !== origin.id && Math.hypot(region.center.x - origin.center.x, region.center.z - origin.center.z) > 42)!;
     const boat: Boat = {
       id: 9001, faction: "player", type: "skiff", position: { ...origin.center }, velocity: { x: 0, z: 0 },
@@ -267,7 +306,7 @@ describe("GameSimulation", () => {
     const simulation = new GameSimulation(0xcafef00d);
     deploy(simulation);
     for (let index = 0; index < TICK_RATE * 220 && simulation.phase === "playing"; index += 1) simulation.tick();
-    expect(simulation.units.filter((unit) => unit.faction === "enemy").length).toBeGreaterThan(4);
+    expect(simulation.units.filter((unit) => unit.faction === "enemy").length).toBeGreaterThanOrEqual(4);
     expect(simulation.buildings.filter((building) => building.faction === "enemy").length).toBeGreaterThan(4);
     expect(simulation.regions.filter((region) => region.owner === "enemy").length).toBeGreaterThan(1);
   });

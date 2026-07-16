@@ -380,6 +380,8 @@ kbd { display: inline-block; padding: 3px 5px; border: 1px solid rgba(200,255,69
 .glyph-eau::after { background: #72d6ff; border-radius: 65% 35% 60% 40%; }
 .glyph-nrj { border-color: #d6ddc1; transform: skewX(-16deg); }
 .glyph-nrj::after { background: #d6ddc1; }
+.glyph-ouv { border-color: #f0d994; border-radius: 50% 50% 42% 42%; transform: rotate(0); }
+.glyph-ouv::after { inset: 3px 5px; background: #f0d994; border-radius: 50% 50% 35% 35%; }
 .resource-readout > div { display: flex; flex-direction: column; }
 .resource-readout span:not(.resource-glyph) { color: #7e8172; font-family: var(--display); font-size: 7px; letter-spacing: .12em; }
 .resource-readout strong { font-family: var(--display); font-size: 16px; line-height: 1.15; }
@@ -436,6 +438,15 @@ kbd { display: inline-block; padding: 3px 5px; border: 1px solid rgba(200,255,69
 .core-autonomy > span { grid-column: 1 / -1; color: var(--acid); font-size: 7px; letter-spacing: .1em; }
 .core-autonomy > b { color: var(--bone); font-size: 8px; }
 .core-autonomy > small { grid-column: 1 / -1; margin-top: 2px; color: #858a74; font-family: var(--body); font-size: 10px; line-height: 1.35; letter-spacing: 0; }
+.vat-level-card { border-left-color: #8eeaff; background: linear-gradient(90deg, rgba(114,214,255,.14), rgba(114,214,255,.025)); }
+.vat-level-card > span { color: #8eeaff; }
+.vat-upgrade-button { width: 100%; min-height: 32px; margin: -5px 0 2px; border: 1px solid rgba(114,214,255,.58); background: rgba(114,214,255,.08); color: #c8f3ff; font-family: var(--display); font-size: 7px; letter-spacing: .075em; cursor: pointer; }
+.vat-upgrade-button:hover:not(:disabled) { border-color: #c8f3ff; background: rgba(114,214,255,.17); }
+.vat-upgrade-button:disabled { opacity: .56; cursor: not-allowed; }
+.territory-worker-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: -5px 0 11px; }
+.territory-worker-actions button { min-height: 30px; border: 1px solid rgba(240,217,148,.45); background: rgba(240,217,148,.05); color: #f0d994; font-family: var(--display); font-size: 7px; letter-spacing: .07em; cursor: pointer; }
+.territory-worker-actions button:hover:not(:disabled) { background: rgba(240,217,148,.14); border-color: #f8e9bc; }
+.territory-worker-actions button:disabled { opacity: .38; cursor: not-allowed; }
 .status-grid span { display: flex; align-items: center; gap: 5px; padding: 7px; border: 1px solid rgba(232,231,211,.1); color: #898c7b; font-family: var(--display); font-size: 6px; }
 .status-grid i { width: 5px; height: 5px; border-radius: 50%; }
 .status-on { background: var(--acid); box-shadow: 0 0 5px var(--acid); }

@@ -15,6 +15,14 @@ export const BUILD_GRID = 2.5;
 export const CORE_SHIELD_SECONDS = 75;
 export const MAX_UNITS_PER_FACTION = 200;
 export const PLAYER_STARTING_RESOURCES = { biomass: 180, ore: 220, water: 0 };
+export const ANCHOR_CAPTURE_RADIUS = 4.6;
+export const ANCHOR_CAPTURE_SECONDS = 9;
+export const VAT_LEVEL_TWO = {
+  cost: { biomass: 52, ore: 64 },
+  buildTime: 14,
+  productionMultiplier: 1.45,
+  researchPerSecond: 2.25,
+} as const;
 
 export interface BiomeDefinition {
   name: string;
@@ -104,22 +112,16 @@ export const BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     energyUse: 1, energyProduction: 0, vision: 8, buildable: true, shortcut: "X",
   },
   vat: {
-    name: "Cuve de clonage", shortName: "CUVE",
-    description: "Produit les escouades à partir de biomasse et de minerai.",
+    name: "Cuve ADN", shortName: "CUVE ADN",
+    description: "Niveau 1 : produit les clones. Niveau 2 : production accélérée et mutations ADN.",
     cost: { biomass: 24, ore: 42 }, hp: 650, buildTime: 9, size: 4.25,
     energyUse: 10, energyProduction: 0, vision: 9, buildable: true, shortcut: "V",
   },
-  bioExtractor: {
-    name: "Moissonneuse cellulaire", shortName: "BIO",
-    description: "Conditionne la biomasse locale en capsules.",
-    cost: { biomass: 5, ore: 24 }, hp: 360, buildTime: 6, size: 3.3,
-    energyUse: 4, energyProduction: 0, vision: 7, buildable: true, shortcut: "B",
-  },
-  oreExtractor: {
-    name: "Foreuse ostéale", shortName: "MINERAI",
-    description: "Extrait le minerai de la région.",
-    cost: { biomass: 14, ore: 18 }, hp: 390, buildTime: 7, size: 3.3,
-    energyUse: 5, energyProduction: 0, vision: 7, buildable: true, shortcut: "O",
+  extractor: {
+    name: "Extracteur symbiotique", shortName: "EXTRACTEUR",
+    description: "Récolte alternativement biomasse et minerai dans une seule ligne de production.",
+    cost: { biomass: 14, ore: 30 }, hp: 460, buildTime: 7, size: 3.6,
+    energyUse: 7, energyProduction: 0, vision: 7, buildable: true, shortcut: "B",
   },
   waterExtractor: {
     name: "Pompe osmotique", shortName: "EAU",
@@ -136,7 +138,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDefinition> = {
   relay: {
     name: "Relais territorial", shortName: "RELAIS",
     description: "Stabilise une région conquise et étend le réseau d'énergie.",
-    cost: { biomass: 18, ore: 34 }, hp: 720, buildTime: 10, size: 3.8,
+    cost: { biomass: 18, ore: 24 }, hp: 720, buildTime: 10, size: 3.8,
     energyUse: 4, energyProduction: 0, vision: 15, buildable: true, shortcut: "R",
   },
   turret: {
@@ -144,12 +146,6 @@ export const BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: "Défense automatique à moyenne portée.",
     cost: { biomass: 18, ore: 48 }, hp: 580, buildTime: 8, size: 3,
     energyUse: 7, energyProduction: 0, vision: 17, buildable: true, shortcut: "T",
-  },
-  lab: {
-    name: "Laboratoire ADN", shortName: "MUTATION",
-    description: "Accélère la recherche et déclenche des mutations adaptatives.",
-    cost: { biomass: 48, ore: 38 }, hp: 480, buildTime: 9, size: 3.8,
-    energyUse: 8, energyProduction: 0, vision: 8, buildable: true, shortcut: "L",
   },
   wall: {
     name: "Paroi calcifiée", shortName: "MUR",

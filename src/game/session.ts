@@ -23,6 +23,7 @@ export interface SessionState {
   selectedBuildingId: number | null;
   selectedBoatId: number | null;
   selectedBuildType: BuildingType | null;
+  selectedRegionId: number | null;
   selectedStartRegionId: number | null;
   hoveredRegionId: number | null;
   selectionBox: { left: number; top: number; width: number; height: number } | null;
@@ -40,6 +41,7 @@ const INITIAL_STATE: SessionState = {
   selectedBuildingId: null,
   selectedBoatId: null,
   selectedBuildType: null,
+  selectedRegionId: null,
   selectedStartRegionId: null,
   hoveredRegionId: null,
   selectionBox: null,
@@ -121,7 +123,7 @@ class GameSession {
     const next = additive
       ? [...new Set([...this.state.selectedUnitIds, ...unitIds.filter((id) => available.has(id))])]
       : unitIds.filter((id) => available.has(id));
-    this.patch({ selectedUnitIds: next, selectedBuildingId: null, selectedBuildType: null });
+    this.patch({ selectedUnitIds: next, selectedBuildingId: null, selectedRegionId: null, selectedBuildType: null });
   }
 
   selectSquadFromUnit(unitId: number, additive = false): void {
@@ -151,15 +153,24 @@ class GameSession {
   }
 
   selectBuilding(buildingId: number | null): void {
-    this.patch({ selectedBuildingId: buildingId, selectedBoatId: null, selectedUnitIds: [], selectedBuildType: null });
+    this.patch({ selectedBuildingId: buildingId, selectedBoatId: null, selectedUnitIds: [], selectedRegionId: null, selectedBuildType: null });
   }
 
   selectBoat(boatId: number | null): void {
-    this.patch({ selectedBoatId: boatId, selectedBuildingId: null, selectedBuildType: null });
+    this.patch({ selectedBoatId: boatId, selectedBuildingId: null, selectedRegionId: null, selectedBuildType: null });
   }
 
   setBuildType(type: BuildingType | null): void {
-    this.patch({ selectedBuildType: type, selectedBuildingId: null, selectedBoatId: null, selectedUnitIds: [] });
+    this.patch({ selectedBuildType: type, selectedBuildingId: null, selectedBoatId: null, selectedRegionId: null, selectedUnitIds: [] });
+  }
+
+  selectRegion(regionId: number | null): void {
+    this.patch({ selectedRegionId: regionId, selectedBuildingId: null, selectedBoatId: null, selectedUnitIds: [], selectedBuildType: null });
+  }
+
+  assignWorker(regionId: number, amount: 1 | -1): void {
+    this.command({ type: "assignWorker", regionId, amount });
+    audioBus.play("place");
   }
 
   setSelectionBox(box: SessionState["selectionBox"]): void {
@@ -186,6 +197,13 @@ class GameSession {
     if (vatId === undefined || vatId === null) return;
     this.command({ type: "queueClone", buildingId: vatId, unitType });
     audioBus.play("queue");
+  }
+
+  upgradeBuilding(buildingId?: number): void {
+    const id = buildingId ?? this.state.selectedBuildingId;
+    if (id === null || id === undefined) return;
+    this.command({ type: "upgradeBuilding", buildingId: id });
+    audioBus.play("place");
   }
 
   queueBoat(boatType: BoatType, buildingId?: number): void {
@@ -292,11 +310,15 @@ class GameSession {
       message.snapshot.boats.some((boat) => boat.id === this.state.selectedBoatId && boat.faction === "player")
       ? this.state.selectedBoatId
       : null;
+    const selectedRegionId = this.state.selectedRegionId !== null &&
+      message.snapshot.regions.some((region) => region.id === this.state.selectedRegionId)
+      ? this.state.selectedRegionId
+      : null;
     const now = performance.now();
     const phaseChanged = previousPhase !== message.snapshot.phase;
     if (phaseChanged || now - this.lastUiEmit >= 140 || message.snapshot.paused !== this.state.snapshot?.paused) {
       this.lastUiEmit = now;
-      this.state = { ...this.state, snapshot: message.snapshot, selectedUnitIds, selectedBuildingId, selectedBoatId };
+      this.state = { ...this.state, snapshot: message.snapshot, selectedUnitIds, selectedBuildingId, selectedBoatId, selectedRegionId };
       this.emit();
     }
   };

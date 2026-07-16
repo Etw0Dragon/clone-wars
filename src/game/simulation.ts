@@ -1,4 +1,6 @@
 import {
+  ANCHOR_CAPTURE_RADIUS,
+  ANCHOR_CAPTURE_SECONDS,
   BUILD_GRID,
   BUILDINGS,
   BOATS,
@@ -10,6 +12,7 @@ import {
   TICK_RATE,
   TICK_SECONDS,
   UNITS,
+  VAT_LEVEL_TWO,
 } from "./config";
 import { chooseEnemyStart, createMap, findRegionAt, pointInPolygon } from "./map";
 import { findPath } from "./pathfinding";
@@ -98,8 +101,8 @@ export class GameSimulation {
   cargo: CargoPacket[] = [];
   projectiles: Projectile[] = [];
   resources: Record<FactionId, ResourceStock> = {
-    player: { ...PLAYER_STARTING_RESOURCES, energyProduced: 0, energyUsed: 0, research: 0 },
-    enemy: { biomass: 90, ore: 95, water: 0, energyProduced: 0, energyUsed: 0, research: 0 },
+    player: { ...PLAYER_STARTING_RESOURCES, energyProduced: 0, energyUsed: 0, research: 0, workers: 0 },
+    enemy: { biomass: 90, ore: 95, water: 0, energyProduced: 0, energyUsed: 0, research: 0, workers: 0 },
   };
   mutations: Record<FactionId, MutationId[]> = { player: [], enemy: [] };
   mutationChoices: MutationId[] = [];
@@ -113,6 +116,7 @@ export class GameSimulation {
   private nextEntityId = 1;
   private nextNotificationId = 1;
   private extractorTimers = new Map<number, number>();
+  private extractorResourceTurns = new Map<number, ResourceType>();
   private portTradeTimers = new Map<number, number>();
   private squadPaths = new Map<string, SquadPath>();
   private mutationLevel: Record<FactionId, number> = { player: 0, enemy: 0 };
@@ -158,6 +162,10 @@ export class GameSimulation {
         return this.placeBuilding(faction, command.buildingType, command.position);
       case "queueClone":
         return this.queueClone(faction, command.buildingId, command.unitType);
+      case "assignWorker":
+        return this.assignWorker(faction, command.regionId, command.amount);
+      case "upgradeBuilding":
+        return this.upgradeBuilding(faction, command.buildingId);
       case "queueBoat":
         return this.queueBoat(faction, command.buildingId, command.boatType);
       case "boardBoat":
@@ -181,6 +189,7 @@ export class GameSimulation {
     if (this.phase !== "playing" || this.paused) return;
     this.tickCount += 1;
     this.updateConstruction();
+    this.updateBuildingUpgrades();
     this.updatePower();
     this.updateEconomy();
     this.updateCargo();
@@ -239,6 +248,7 @@ export class GameSimulation {
     region.owner = faction;
     region.captureFaction = faction;
     region.captureProgress = 100;
+    this.claimAllAnchors(region, faction);
     this.discoveredBy[faction].add(region.id);
     const center = this.findFreePoint(region, region.center, 5);
     const offsets: Array<[BuildingType, number, number]> = [
@@ -251,26 +261,16 @@ export class GameSimulation {
       const position = this.findFreePoint(region, { x: center.x + offsetX, z: center.z + offsetZ }, BUILDINGS[type].size);
       this.addBuilding(faction, type, position, region.id, true);
     }
-    for (let index = 0; index < 4; index += 1) {
-      this.spawnUnit(faction, "worker", {
-        x: center.x + (index - 1.5) * 1.2,
-        z: center.z + 4,
-      });
-    }
+    this.addRegionalWorkers(region, faction, 2);
   }
 
   private spawnPlayerDeployment(region: Region): void {
     region.owner = "player";
     region.captureFaction = "player";
     region.captureProgress = 100;
+    this.claimAllAnchors(region, "player");
     this.discoveredBy.player.add(region.id);
-    const center = this.findFreePoint(region, region.center, 5);
-    for (let index = 0; index < 4; index += 1) {
-      this.spawnUnit("player", "worker", {
-        x: center.x + (index - 1.5) * 1.2,
-        z: center.z + 4,
-      });
-    }
+    this.addRegionalWorkers(region, "player", 2);
   }
 
   private findFreePoint(region: Region, desired: Vec2, size: number): Vec2 {
@@ -308,6 +308,9 @@ export class GameSimulation {
       hp: complete ? definition.hp : Math.max(1, definition.hp * 0.12),
       maxHp: definition.hp,
       construction: complete ? 1 : 0.03,
+      level: 1,
+      upgradeProgress: 0,
+      upgrading: false,
       active: complete,
       powered: complete,
       orientation: this.automaticOrientation(faction, type, snappedPosition, regionId),
@@ -364,6 +367,14 @@ export class GameSimulation {
     stock.water -= cost.water ?? 0;
   }
 
+  private regionalWorkerCount(regionId: number, faction: FactionId): number {
+    return this.regions.find((region) => region.id === regionId)?.workers[faction] ?? 0;
+  }
+
+  private addRegionalWorkers(region: Region, faction: FactionId, amount: number): void {
+    region.workers[faction] = Math.max(0, region.workers[faction] + amount);
+  }
+
   private placeBuilding(faction: FactionId, type: BuildingType, rawPosition: Vec2): boolean {
     const definition = BUILDINGS[type];
     if (!definition.buildable) return false;
@@ -377,7 +388,8 @@ export class GameSimulation {
     }
     const position = { x: snap(rawPosition.x), z: snap(rawPosition.z) };
     const region = findRegionAt(this.regions, position);
-    if (!region || region.biome === "water" || region.owner !== faction) {
+    const canStabilizeClaim = type === "relay" && region && this.controlsRegion(region, faction);
+    if (!region || region.biome === "water" || (region.owner !== faction && !canStabilizeClaim)) {
       if (faction === "player") this.notify("warning", "CONSTRUCTION HORS TERRITOIRE");
       return false;
     }
@@ -389,12 +401,9 @@ export class GameSimulation {
       if (faction === "player") this.notify("warning", "EMPLACEMENT OBSTRUÉ");
       return false;
     }
-    const builderRange = type === "conveyor" || type === "wall" ? 24 : 18;
-    const hasBuilder = this.units.some((unit) =>
-      unit.faction === faction && unit.type === "worker" && unit.hp > 0 && distance(unit.position, position) <= builderRange,
-    );
-    if (!hasBuilder) {
-      if (faction === "player") this.notify("warning", "AUCUN OUVRIER À PORTÉE");
+    const workers = this.regionalWorkerCount(region.id, faction);
+    if (workers < 1) {
+      if (faction === "player") this.notify("warning", "AUCUN OUVRIER AFFECTÉ À CE TERRITOIRE");
       return false;
     }
     if ((type === "waterExtractor" || type === "port") && !this.isWaterAdjacent(region)) {
@@ -403,10 +412,10 @@ export class GameSimulation {
     }
 
     this.spend(faction, definition.cost);
-    this.addBuilding(faction, type, position, region.id);
+    this.addBuilding(faction, type, position, region.id, workers >= 4);
     if (faction === "player") {
       this.stats.buildingsBuilt += 1;
-      this.notify("info", `${definition.shortName} — CONSTRUCTION LANCÉE`);
+      this.notify(workers >= 4 ? "success" : "info", `${definition.shortName} — ${workers >= 4 ? "CONSTRUIT INSTANTANÉMENT" : "CONSTRUCTION LANCÉE"}`);
     }
     return true;
   }
@@ -557,8 +566,7 @@ export class GameSimulation {
     if (!building || building.hp >= building.maxHp) return false;
     const missingRatio = 1 - building.hp / building.maxHp;
     const oreCost = Math.max(1, Math.ceil((BUILDINGS[building.type].cost.ore ?? 4) * missingRatio * 0.45));
-    const hasWorker = this.units.some((unit) => unit.faction === faction && unit.type === "worker" && distance(unit.position, building.position) < 14);
-    if (!hasWorker || this.resources[faction].ore < oreCost) return false;
+    if (this.regionalWorkerCount(building.regionId, faction) < 1 || this.resources[faction].ore < oreCost) return false;
     this.resources[faction].ore -= oreCost;
     building.hp = building.maxHp;
     if (faction === "player") this.notify("success", `${BUILDINGS[building.type].shortName} RÉPARÉ`);
@@ -580,23 +588,43 @@ export class GameSimulation {
   private updateConstruction(): void {
     for (const building of this.buildings) {
       if (building.construction >= 1 || building.hp <= 0) continue;
-      let builders = 0;
-      const constructionRange = building.type === "conveyor" || building.type === "wall" ? 24 : 18;
-      for (const unit of this.units) {
-        if (
-          unit.faction === building.faction && unit.type === "worker" && unit.hp > 0 &&
-          distance(unit.position, building.position) <= constructionRange
-        ) builders += 1;
-      }
+      const builders = this.regionalWorkerCount(building.regionId, building.faction);
       if (builders === 0) continue;
+      if (builders >= 4) {
+        building.construction = 1;
+        building.hp = building.maxHp;
+        if (building.faction === "player") this.notify("success", `${BUILDINGS[building.type].shortName} OPÉRATIONNEL`);
+        continue;
+      }
       const definition = BUILDINGS[building.type];
-      const speed = 0.55 + Math.min(3, builders) * 0.45;
+      const speed = 0.55 + builders * 0.45;
       const previous = building.construction;
       building.construction = Math.min(1, building.construction + (TICK_SECONDS / Math.max(0.25, definition.buildTime)) * speed);
       building.hp = Math.min(building.maxHp, Math.max(building.hp, building.maxHp * building.construction));
       if (previous < 1 && building.construction >= 1 && building.faction === "player") {
         this.notify("success", `${definition.shortName} OPÉRATIONNEL`);
       }
+    }
+  }
+
+  private updateBuildingUpgrades(): void {
+    for (const building of this.buildings) {
+      if (!building.upgrading || building.type !== "vat" || building.level >= 2 || building.hp <= 0) continue;
+      const builders = this.regionalWorkerCount(building.regionId, building.faction);
+      if (builders === 0) continue;
+      if (builders >= 4) {
+        building.upgradeProgress = 1;
+        building.level = 2;
+        building.upgrading = false;
+        if (building.faction === "player") this.notify("success", "CUVE ADN NIVEAU 2 — MUTATIONS DÉVERROUILLÉES");
+        continue;
+      }
+      const speed = 0.5 + Math.min(3, builders) * 0.42;
+      building.upgradeProgress = Math.min(1, building.upgradeProgress + (TICK_SECONDS / VAT_LEVEL_TWO.buildTime) * speed);
+      if (building.upgradeProgress < 1) continue;
+      building.level = 2;
+      building.upgrading = false;
+      if (building.faction === "player") this.notify("success", "CUVE ADN NIVEAU 2 — MUTATIONS DÉVERROUILLÉES");
     }
   }
 
@@ -619,7 +647,7 @@ export class GameSimulation {
       const connectedNodes = nodes.filter((node) => connected.has(node.id));
       let produced = connectedNodes.reduce((sum, building) => sum + BUILDINGS[building.type].energyProduction, 0);
       let used = 0;
-      const priority: BuildingType[] = ["core", "generator", "relay", "storage", "conveyor", "bioExtractor", "oreExtractor", "waterExtractor", "port", "vat", "lab", "turret", "wall"];
+      const priority: BuildingType[] = ["core", "generator", "relay", "storage", "conveyor", "extractor", "waterExtractor", "port", "vat", "turret", "wall"];
       factionBuildings.sort((first, second) => priority.indexOf(first.type) - priority.indexOf(second.type));
       for (const building of factionBuildings) {
         const isPassive = building.type === "wall" || building.type === "core";
@@ -647,10 +675,12 @@ export class GameSimulation {
     }
 
     for (const extractor of this.buildings) {
-      if (!extractor.active || !["bioExtractor", "oreExtractor", "waterExtractor"].includes(extractor.type)) continue;
+      if (!extractor.active || !["extractor", "waterExtractor"].includes(extractor.type)) continue;
       const region = this.regions.find((candidate) => candidate.id === extractor.regionId);
       if (!region) continue;
-      const resource: ResourceType = extractor.type === "bioExtractor" ? "biomass" : extractor.type === "oreExtractor" ? "ore" : "water";
+      const resource: ResourceType = extractor.type === "waterExtractor"
+        ? "water"
+        : this.extractorResourceTurns.get(extractor.id) ?? "biomass";
       let timer = this.extractorTimers.get(extractor.id) ?? 0;
       timer -= TICK_SECONDS;
       if (timer <= 0) {
@@ -666,6 +696,9 @@ export class GameSimulation {
             progress: 0,
             position: { ...path[0]! },
           });
+          if (extractor.type === "extractor") {
+            this.extractorResourceTurns.set(extractor.id, resource === "biomass" ? "ore" : "biomass");
+          }
           const yieldRate = resource === "water"
             ? Math.max(...region.neighbors.map((id) => this.regions.find((candidate) => candidate.id === id)?.yields.water ?? 0), 0.35)
             : region.yields[resource];
@@ -759,7 +792,8 @@ export class GameSimulation {
       if (vat.type !== "vat" || !vat.active || vat.queue.length === 0) continue;
       const type = vat.queue[0]!;
       const definition = UNITS[type];
-      const speed = this.mutations[vat.faction].includes("rapidGestation") ? 1.4 : 1;
+      const speed = (this.mutations[vat.faction].includes("rapidGestation") ? 1.4 : 1) *
+        (vat.level >= 2 ? VAT_LEVEL_TWO.productionMultiplier : 1);
       vat.productionProgress += (TICK_SECONDS * speed) / definition.productionTime;
       if (vat.productionProgress < 1) continue;
       vat.productionProgress = 0;
@@ -770,7 +804,7 @@ export class GameSimulation {
         z: vat.position.z + Math.sin(angle) * 5,
       });
       this.resources[vat.faction].research += type === "breaker" ? 7 : 3;
-      if (vat.faction === "player") this.stats.clonesProduced += 1;
+      if (vat.faction === "player" && type !== "worker") this.stats.clonesProduced += 1;
     }
   }
 
@@ -913,7 +947,15 @@ export class GameSimulation {
     }
   }
 
-  private spawnUnit(faction: FactionId, type: UnitType, position: Vec2): Unit {
+  private spawnUnit(faction: FactionId, type: UnitType, position: Vec2): Unit | null {
+    if (type === "worker") {
+      const region = findRegionAt(this.regions, position);
+      if (region && region.biome !== "water") {
+        this.resources[faction].workers += 1;
+        if (faction === "player") this.notify("success", "OUVRIER INCUBÉ — AFFECTEZ-LE À UN TERRITOIRE");
+      }
+      return null;
+    }
     const definition = UNITS[type];
     const reinforced = this.mutations[faction].includes("reinforcedTissue") ? 1.28 : 1;
     const fragile = this.mutations[faction].includes("rapidGestation") ? 0.9 : 1;
@@ -930,6 +972,25 @@ export class GameSimulation {
     };
     this.units.push(unit);
     return unit;
+  }
+
+  private assignWorker(faction: FactionId, regionId: number, amount: 1 | -1): boolean {
+    const region = this.regions.find((candidate) => candidate.id === regionId);
+    if (!region || region.biome === "water" || (region.owner !== faction && region.captureFaction !== faction)) return false;
+    if (amount > 0) {
+      if (this.resources[faction].workers < 1) {
+        if (faction === "player") this.notify("warning", "AUCUN OUVRIER DISPONIBLE EN RÉSERVE");
+        return false;
+      }
+      this.resources[faction].workers -= 1;
+      this.addRegionalWorkers(region, faction, 1);
+    } else {
+      if (region.workers[faction] < 1) return false;
+      this.addRegionalWorkers(region, faction, -1);
+      this.resources[faction].workers += 1;
+    }
+    if (faction === "player") this.notify("info", `${region.name.toUpperCase()} — ${region.workers[faction]} OUVRIER${region.workers[faction] > 1 ? "S" : ""} AFFECTÉ${region.workers[faction] > 1 ? "S" : ""}`);
+    return true;
   }
 
   private chooseMutation(faction: FactionId, mutationId: MutationId): boolean {
@@ -953,6 +1014,31 @@ export class GameSimulation {
       this.phase = "playing";
       this.notify("success", `MUTATION STABILISÉE — ${MUTATIONS[mutationId].name}`);
     }
+    return true;
+  }
+
+  private upgradeBuilding(faction: FactionId, buildingId: number): boolean {
+    const building = this.buildings.find((candidate) => candidate.id === buildingId && candidate.faction === faction);
+    if (!building || building.type !== "vat" || building.level >= 2 || building.upgrading || building.construction < 1) return false;
+    if (!this.canAfford(faction, VAT_LEVEL_TWO.cost)) {
+      if (faction === "player") this.notify("warning", "MATIÈRE INSUFFISANTE POUR L’ÉVOLUTION ADN");
+      return false;
+    }
+    const workers = this.regionalWorkerCount(building.regionId, faction);
+    if (workers < 1) {
+      if (faction === "player") this.notify("warning", "AUCUN OUVRIER AFFECTÉ À LA CUVE");
+      return false;
+    }
+    this.spend(faction, VAT_LEVEL_TWO.cost);
+    if (workers >= 4) {
+      building.level = 2;
+      building.upgradeProgress = 1;
+      if (faction === "player") this.notify("success", "CUVE ADN NIVEAU 2 — ÉVOLUTION INSTANTANÉE");
+      return true;
+    }
+    building.upgrading = true;
+    building.upgradeProgress = 0;
+    if (faction === "player") this.notify("info", "ÉVOLUTION DE LA CUVE ADN LANCÉE");
     return true;
   }
 
@@ -1279,57 +1365,83 @@ export class GameSimulation {
     this.buildings = this.buildings.filter((building) => building.hp > 0);
   }
 
-  private updateCapture(): void {
-    const presence = new Map<number, Record<FactionId, number>>();
-    for (const region of this.regions) presence.set(region.id, { player: 0, enemy: 0 });
-    for (const unit of this.units) {
-      if (unit.embarkedIn !== null) continue;
-      const region = findRegionAt(this.regions, unit.position);
-      if (!region || region.biome === "water") continue;
-      presence.get(region.id)![unit.faction] += UNITS[unit.type].capture;
+  private claimAllAnchors(region: Region, faction: FactionId): void {
+    for (const anchor of region.anchors) {
+      anchor.owner = faction;
+      anchor.captureFaction = faction;
+      anchor.captureProgress = 100;
     }
+  }
 
+  private controlledAnchorCount(region: Region, faction: FactionId): number {
+    return region.anchors.filter((anchor) => anchor.owner === faction).length;
+  }
+
+  private controlsRegion(region: Region, faction: FactionId): boolean {
+    return region.anchors.length > 0 && this.controlledAnchorCount(region, faction) >= Math.ceil(region.anchors.length / 2);
+  }
+
+  private updateCapture(): void {
     for (const region of this.regions) {
       if (region.biome === "water") continue;
-      const scores = presence.get(region.id)!;
-      const dominant: FactionId | null = scores.player > scores.enemy * 1.15 && scores.player > 0.2
-        ? "player"
-        : scores.enemy > scores.player * 1.15 && scores.enemy > 0.2
-          ? "enemy"
-          : null;
-      if (dominant) {
-        const frontierBonus = region.neighbors.some((id) => this.regions.find((candidate) => candidate.id === id)?.owner === dominant) ? 1.25 : 1;
+      const previousClaimant = region.captureFaction;
+
+      for (const anchor of region.anchors) {
+        const scores: Record<FactionId, number> = { player: 0, enemy: 0 };
+        for (const unit of this.units) {
+          if (unit.embarkedIn !== null || distance(unit.position, anchor.position) > ANCHOR_CAPTURE_RADIUS) continue;
+          scores[unit.faction] += UNITS[unit.type].capture;
+        }
+        const dominant: FactionId | null = scores.player > scores.enemy * 1.15 && scores.player > 0.2
+          ? "player"
+          : scores.enemy > scores.player * 1.15 && scores.enemy > 0.2
+            ? "enemy"
+            : null;
+        if (!dominant || dominant === anchor.owner) {
+          if (dominant === anchor.owner) {
+            anchor.captureFaction = dominant;
+            anchor.captureProgress = Math.min(100, anchor.captureProgress + scores[dominant] * TICK_SECONDS * 5);
+          }
+          continue;
+        }
+        if (anchor.captureFaction !== dominant) {
+          anchor.captureFaction = dominant;
+          anchor.captureProgress = 0;
+        }
+        const frontierBonus = region.neighbors.some((id) => this.regions.find((candidate) => candidate.id === id)?.owner === dominant) ? 1.2 : 1;
         const elevationResistance = 1 / (1 + region.elevation * 0.12);
-        if (region.owner === dominant) {
-          region.captureFaction = dominant;
-          region.captureProgress = Math.min(100, region.captureProgress + scores[dominant] * TICK_SECONDS * 2.2);
-        } else {
-          if (region.captureFaction !== dominant) {
-            region.captureFaction = dominant;
-            region.captureProgress = 0;
-          }
-          region.captureProgress += Math.min(4.5, scores[dominant]) * TICK_SECONDS * 6.8 * frontierBonus * elevationResistance;
-          if (region.captureProgress >= 100) {
-            const previous = region.owner;
-            region.owner = dominant;
-            region.captureProgress = 100;
-            if (dominant === "player" || previous === "player") {
-              this.notify(dominant === "player" ? "success" : "warning", `${region.name.toUpperCase()} — ${dominant === "player" ? "ASSIMILÉE" : "PERDUE"}`);
-            }
-          }
+        const rate = Math.min(4.8, scores[dominant]) * (100 / ANCHOR_CAPTURE_SECONDS) * frontierBonus * elevationResistance;
+        anchor.captureProgress = Math.min(100, anchor.captureProgress + rate * TICK_SECONDS);
+        if (anchor.captureProgress >= 100) {
+          anchor.owner = dominant;
+          anchor.captureFaction = dominant;
         }
-      } else if (region.owner !== "neutral") {
-        const stabilizer = this.buildings.some((building) =>
-          building.regionId === region.id && building.faction === region.owner &&
-          (building.type === "relay" || building.type === "core") && building.construction >= 1,
-        );
-        if (!stabilizer && scores[region.owner] <= 0.1) {
-          region.captureProgress = Math.max(0, region.captureProgress - 0.35 * TICK_SECONDS);
-          if (region.captureProgress <= 0) {
-            region.owner = "neutral";
-            region.captureFaction = "neutral";
-          }
+      }
+
+      const playerControls = this.controlsRegion(region, "player");
+      const enemyControls = this.controlsRegion(region, "enemy");
+      const claimant: FactionId | "neutral" = playerControls ? "player" : enemyControls ? "enemy" : "neutral";
+      region.captureFaction = claimant;
+      region.captureProgress = claimant === "neutral"
+        ? Math.max(this.controlledAnchorCount(region, "player"), this.controlledAnchorCount(region, "enemy")) / region.anchors.length * 100
+        : this.controlledAnchorCount(region, claimant) / region.anchors.length * 100;
+
+      if (claimant !== "neutral" && claimant !== region.owner && claimant !== previousClaimant) {
+        if (claimant === "player" || region.owner === "player") {
+          this.notify(claimant === "player" ? "success" : "warning", `${region.name.toUpperCase()} — NŒUDS MAJORITAIRES, POSEZ UN RELAIS`);
         }
+      }
+
+      if (claimant === "neutral" || claimant === region.owner) continue;
+      const stabilizer = this.buildings.some((building) =>
+        building.regionId === region.id && building.faction === claimant && building.type === "relay" && building.construction >= 1,
+      );
+      if (!stabilizer) continue;
+      const previousOwner = region.owner;
+      region.owner = claimant;
+      region.captureProgress = 100;
+      if (claimant === "player" || previousOwner === "player") {
+        this.notify(claimant === "player" ? "success" : "warning", `${region.name.toUpperCase()} — RELAIS STABILISÉ`);
       }
     }
     const playerTerritory = this.regions.filter((region) => region.owner === "player").length;
@@ -1377,8 +1489,8 @@ export class GameSimulation {
 
   private updateResearch(): void {
     for (const faction of FACTIONS) {
-      const activeLabs = this.buildings.filter((building) => building.faction === faction && building.type === "lab" && building.active).length;
-      this.resources[faction].research += (0.08 + activeLabs * 2.25) * TICK_SECONDS;
+      const activeVats = this.buildings.filter((building) => building.faction === faction && building.type === "vat" && building.active && building.level >= 2).length;
+      this.resources[faction].research += activeVats * VAT_LEVEL_TWO.researchPerSecond * TICK_SECONDS;
     }
   }
 
@@ -1386,6 +1498,8 @@ export class GameSimulation {
     for (const faction of FACTIONS) {
       const level = this.mutationLevel[faction];
       const threshold = MUTATION_THRESHOLDS[level];
+      const hasMutationVat = this.buildings.some((building) => building.faction === faction && building.type === "vat" && building.active && building.level >= 2);
+      if (!hasMutationVat) continue;
       if (threshold === undefined || this.resources[faction].research < threshold) continue;
       const eligible = (Object.keys(MUTATIONS) as MutationId[]).filter((id) => !this.mutations[faction].includes(id));
       if (faction === "enemy") {
@@ -1411,12 +1525,13 @@ export class GameSimulation {
     const faction: FactionId = "enemy";
     const ownBuildings = this.buildings.filter((building) => building.faction === faction);
     const ownUnits = this.units.filter((unit) => unit.faction === faction);
-    const workers = ownUnits.filter((unit) => unit.type === "worker");
     const cores = ownBuildings.filter((building) => building.type === "core" && building.hp > 0);
     if (cores.length === 0) return;
 
+    const expansionClaimPending = this.regions.some((region) => this.controlsRegion(region, faction) && region.owner !== faction);
     const vats = ownBuildings.filter((building) => building.type === "vat" && building.construction >= 1);
     for (const vat of vats) {
+      if (expansionClaimPending) continue;
       if (vat.queue.length >= 3) continue;
       const cycle: UnitType[] = ["scout", "assault", "assault", "worker", "breaker", "assault"];
       const type = cycle[(ownUnits.length + vat.queue.length) % cycle.length]!;
@@ -1426,25 +1541,18 @@ export class GameSimulation {
     for (const core of cores) this.runAiBase(core, ownBuildings);
 
     for (const region of this.regions) {
-      if (region.owner !== "enemy" || cores.some((core) => core.regionId === region.id)) continue;
+      if (!this.controlsRegion(region, "enemy") || cores.some((core) => core.regionId === region.id)) continue;
       const hasRelay = ownBuildings.some((building) => building.regionId === region.id && building.type === "relay");
-      const workerNearby = workers.some((worker) => distance(worker.position, region.center) < 16);
-      if (!hasRelay && workerNearby) {
+      if (region.workers.enemy === 0 && this.resources.enemy.workers > 0) {
+        this.assignWorker("enemy", region.id, 1);
+      }
+      if (!hasRelay && region.workers.enemy > 0) {
         this.applyCommand(faction, { type: "placeBuilding", buildingType: "relay", position: region.center });
       }
     }
 
     const squads = new Map<number, Unit[]>();
-    const baseWorkerIds = new Set<number>();
-    for (const core of cores) {
-      workers
-        .filter((worker) => distance(worker.position, core.position) < 24)
-        .sort((first, second) => distance(first.position, core.position) - distance(second.position, core.position))
-        .slice(0, 3)
-        .forEach((worker) => baseWorkerIds.add(worker.id));
-    }
     for (const unit of ownUnits) {
-      if (baseWorkerIds.has(unit.id)) continue;
       const members = squads.get(unit.squadId) ?? [];
       members.push(unit);
       squads.set(unit.squadId, members);
@@ -1459,7 +1567,10 @@ export class GameSimulation {
         members.some((unit) => unit.order.type !== "attack" && "target" in unit.order && distance(unit.position, unit.order.target) < 4);
       if (!allIdle && this.tickCount % (TICK_RATE * 8) !== 0) continue;
       let target: Vec2 | null = null;
-      if (this.ai.knownPlayerCore && this.elapsedSeconds > 150) {
+      const unfinishedClaim = this.regions.find((region) => this.controlsRegion(region, "enemy") && region.owner !== "enemy");
+      if (unfinishedClaim) {
+        target = unfinishedClaim.anchors.find((anchor) => anchor.owner !== "enemy")?.position ?? unfinishedClaim.center;
+      } else if (this.ai.knownPlayerCore && this.elapsedSeconds > 150) {
         target = this.ai.knownPlayerCore;
       } else {
         const ownedIds = new Set(this.regions.filter((region) => region.owner === "enemy").map((region) => region.id));
@@ -1470,7 +1581,8 @@ export class GameSimulation {
           ? frontier
           : this.regions.filter((region) => region.biome !== "water" && this.discoveredBy.enemy.has(region.id) && region.owner !== "enemy");
         candidates.sort((first, second) => distance(center, first.center) - distance(center, second.center));
-        target = candidates[0]?.center ?? this.regions[(this.ai.scoutRegionCursor++) % this.regions.length]!.center;
+        const region = candidates[0] ?? this.regions[(this.ai.scoutRegionCursor++) % this.regions.length]!;
+        target = region.anchors.find((anchor) => anchor.owner !== "enemy")?.position ?? region.center;
       }
       this.applyCommand(faction, {
         type: "setOrder",
@@ -1487,15 +1599,12 @@ export class GameSimulation {
     const storage = baseBuildings.find((building) => building.type === "storage");
     if (!storage) return;
 
-    if (!baseBuildings.some((building) => building.type === "bioExtractor")) {
-      const target = this.findFreePoint(startRegion, { x: storage.position.x + 11, z: storage.position.z }, BUILDINGS.bioExtractor.size);
-      this.applyCommand("enemy", { type: "placeBuilding", buildingType: "bioExtractor", position: target });
-    } else if (!baseBuildings.some((building) => building.type === "oreExtractor")) {
-      const target = this.findFreePoint(startRegion, { x: storage.position.x - 11, z: storage.position.z + 2.5 }, BUILDINGS.oreExtractor.size);
-      this.applyCommand("enemy", { type: "placeBuilding", buildingType: "oreExtractor", position: target });
+    if (!baseBuildings.some((building) => building.type === "extractor")) {
+      const target = this.findFreePoint(startRegion, { x: storage.position.x + 11, z: storage.position.z }, BUILDINGS.extractor.size);
+      this.applyCommand("enemy", { type: "placeBuilding", buildingType: "extractor", position: target });
     }
 
-    const extractors = baseBuildings.filter((building) => building.type === "bioExtractor" || building.type === "oreExtractor");
+    const extractors = baseBuildings.filter((building) => building.type === "extractor");
     for (const extractor of extractors) this.extendAiConveyor(extractor, storage);
 
     const localEnergy = baseBuildings.reduce((sum, building) => sum + (building.powered ? BUILDINGS[building.type].energyProduction - BUILDINGS[building.type].energyUse : 0), 0);
@@ -1503,9 +1612,9 @@ export class GameSimulation {
       const target = this.findFreePoint(startRegion, { x: core.position.x - 10, z: core.position.z + 8 }, BUILDINGS.generator.size);
       this.applyCommand("enemy", { type: "placeBuilding", buildingType: "generator", position: target });
     }
-    if (this.elapsedSeconds > 55 && !baseBuildings.some((building) => building.type === "lab")) {
-      const target = this.findFreePoint(startRegion, { x: core.position.x + 10, z: core.position.z + 9 }, BUILDINGS.lab.size);
-      this.applyCommand("enemy", { type: "placeBuilding", buildingType: "lab", position: target });
+    if (this.elapsedSeconds > 55) {
+      const vat = baseBuildings.find((building) => building.type === "vat" && building.construction >= 1);
+      if (vat?.level === 1 && !vat.upgrading) this.applyCommand("enemy", { type: "upgradeBuilding", buildingId: vat.id });
     }
     if (this.elapsedSeconds > 75 && baseBuildings.filter((building) => building.type === "turret").length < 2) {
       const angle = baseBuildings.filter((building) => building.type === "turret").length * Math.PI + 0.4;
@@ -1541,6 +1650,7 @@ export class GameSimulation {
       vertices: region.vertices.map((vertex) => ({ ...vertex })),
       neighbors: [...region.neighbors],
       yields: { ...region.yields },
+      workers: { ...region.workers },
       discovered: true,
       visible: true,
     }));
